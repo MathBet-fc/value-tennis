@@ -132,7 +132,7 @@ class TennisMarkov:
         if best_of == 3: return p**2 + 2*(p**2)*(1-p), p_set
         else: return p**3 + 3*(p**3)*(1-p) + 6*(p**3)*((1-p)**2), p_set
 
-# --- 4. ML ENGINE (DATI & PREVISIONI) ---
+# --- 4. ML ENGINE (DATI & PREVISIONI AVANZATE) ---
 class TennisMLPredictor:
     def __init__(self):
         self.data = None
@@ -179,34 +179,69 @@ class TennisMLPredictor:
         return avg_1st_win, avg_2nd_win, avg_total_srv
 
     def get_player_prediction(self, df, player_name, surface):
-        """Estrae stats giocatore."""
+        """
+        Estrae stats servizio E RISPOSTA (Calcolata sull'opposto).
+        Questa è la funzione avanzata che calcola la risposta reale.
+        """
         if df is None: return None
-        p_wins = df[df['winner_name'] == player_name].copy()
-        p_loss = df[df['loser_name'] == player_name].copy()
-        if p_wins.empty and p_loss.empty: return None
         
+        # 1. Match dove il giocatore ha VINTO
+        p_wins = df[df['winner_name'] == player_name].copy()
+        # Per la risposta: guardiamo i dati del perdente (avversario)
+        p_wins['opp_1st_in'] = p_wins['l_1stIn']
+        p_wins['opp_1st_won'] = p_wins['l_1stWon']
+        p_wins['opp_2nd_in'] = p_wins['l_svpt'] - p_wins['l_1stIn']
+        p_wins['opp_2nd_won'] = p_wins['l_2ndWon']
+        # Standardizza nomi (Servizio Giocatore)
         p_wins.rename(columns={'w_1stIn':'1in', 'w_svpt':'svpt', 'w_1stWon':'1w', 'w_2ndWon':'2w', 'w_ace':'ace', 'w_df':'df'}, inplace=True)
+        
+        # 2. Match dove il giocatore ha PERSO
+        p_loss = df[df['loser_name'] == player_name].copy()
+        # Per la risposta: guardiamo i dati del vincitore (avversario)
+        p_loss['opp_1st_in'] = p_loss['w_1stIn']
+        p_loss['opp_1st_won'] = p_loss['w_1stWon']
+        p_loss['opp_2nd_in'] = p_loss['w_svpt'] - p_loss['w_1stIn']
+        p_loss['opp_2nd_won'] = p_loss['w_2ndWon']
+        # Standardizza nomi (Servizio Giocatore)
         p_loss.rename(columns={'l_1stIn':'1in', 'l_svpt':'svpt', 'l_1stWon':'1w', 'l_2ndWon':'2w', 'l_ace':'ace', 'l_df':'df'}, inplace=True)
         
-        cols = ['tourney_date','surface','1in','svpt','1w','2w','ace','df']
-        hist = pd.concat([p_wins[cols], p_loss[cols]]).sort_values('tourney_date', ascending=False).head(30)
-        surf_hist = hist[hist['surface'] == surface]
-        if len(surf_hist) >= 5: hist = surf_hist
+        if p_wins.empty and p_loss.empty: return None
+
+        # 3. Unione e Filtro Superficie
+        cols = ['tourney_date','surface','1in','svpt','1w','2w','ace','df', 
+                'opp_1st_in', 'opp_1st_won', 'opp_2nd_in', 'opp_2nd_won']
         
+        hist = pd.concat([p_wins, p_loss], ignore_index=True)
+        hist = hist.sort_values('tourney_date', ascending=False).head(50) # Ultime 50 partite
+        
+        surf_hist = hist[hist['surface'] == surface]
+        if len(surf_hist) >= 5: hist = surf_hist # Preferenza superficie
+        
+        # 4. Calcoli Finali (Medie Pesate)
         tot_svpt = hist['svpt'].sum()
         if tot_svpt == 0: return None
         
+        # Totali per Risposta
+        tot_opp_1st_in = hist['opp_1st_in'].sum()
+        tot_opp_1st_won = hist['opp_1st_won'].sum()
+        tot_opp_2nd_in = hist['opp_2nd_in'].sum()
+        tot_opp_2nd_won = hist['opp_2nd_won'].sum()
+        
+        # Calcolo % Risposta (1 - % Punti vinti dall'avversario al servizio)
+        ret_1st = 1.0 - (tot_opp_1st_won / tot_opp_1st_in) if tot_opp_1st_in > 0 else 0.30
+        ret_2nd = 1.0 - (tot_opp_2nd_won / tot_opp_2nd_in) if tot_opp_2nd_in > 0 else 0.50
+
         return {
             '1st_in': hist['1in'].sum() / tot_svpt,
             '1st_win': hist['1w'].sum() / hist['1in'].sum() if hist['1in'].sum()>0 else 0,
             '2nd_win': hist['2w'].sum() / (tot_svpt - hist['1in'].sum()) if (tot_svpt - hist['1in'].sum())>0 else 0,
             'ace_pct': hist['ace'].sum() / tot_svpt,
             'df_pct': hist['df'].sum() / tot_svpt,
-            'ret_1st_win': 0.30, 
-            'ret_2nd_win': 0.50
+            'ret_1st_win': ret_1st, 
+            'ret_2nd_win': ret_2nd
         }
 
-# --- 5. MONTE CARLO ENGINE (CORRETTO) ---
+# --- 5. MONTE CARLO ENGINE (CORRETTO - RESET STATS) ---
 class TennisMonteCarloEngine:
     def __init__(self, p1_stats, p2_stats, config, current_state=None):
         # SALVATAGGIO STATS ORIGINALI
@@ -438,7 +473,7 @@ def main():
     ce1, ce2 = st.sidebar.columns(2)
     altitude = ce1.checkbox("Altitudine"); indoor = ce1.checkbox("Indoor"); windy = ce2.checkbox("Vento")
 
-    # 5. STATS (MODIFICA RICHIESTA: CHIAVI DINAMICHE)
+    # 5. STATS (CHIAVI DINAMICHE PER AGGIORNAMENTO DATI)
     st.sidebar.markdown("---")
     st.sidebar.subheader("📊 Statistiche")
     p1_data = ml.get_player_prediction(raw_df, p1_name, surface)
@@ -456,8 +491,8 @@ def main():
         p1_ace = st.number_input(f"Ace %", 0.0, 0.4, val(p1_data,'ace_pct',0.08), key=f'p1a_{p1_name}')
         p1_df = st.number_input(f"DF %", 0.0, 0.3, val(p1_data,'df_pct',0.03), key=f'p1d_{p1_name}')
         st.markdown("**Risposta**")
-        p1_r1 = st.number_input("Win vs 1st", 0.1, 0.6, 1-avg_1st, key=f'p1r1_{p1_name}')
-        p1_r2 = st.number_input("Win vs 2nd", 0.2, 0.8, 1-avg_2nd, key=f'p1r2_{p1_name}')
+        p1_r1 = st.number_input("Win vs 1st", 0.1, 0.6, val(p1_data, 'ret_1st_win', 1-avg_1st), key=f'p1r1_{p1_name}')
+        p1_r2 = st.number_input("Win vs 2nd", 0.2, 0.8, val(p1_data, 'ret_2nd_win', 1-avg_2nd), key=f'p1r2_{p1_name}')
 
     # Check P2
     if p2_data: st.sidebar.success(f"✅ Dati per {p2_name}")
@@ -470,8 +505,8 @@ def main():
         p2_ace = st.number_input(f"Ace %", 0.0, 0.4, val(p2_data,'ace_pct',0.07), key=f'p2a_{p2_name}')
         p2_df = st.number_input(f"DF %", 0.0, 0.3, val(p2_data,'df_pct',0.04), key=f'p2d_{p2_name}')
         st.markdown("**Risposta**")
-        p2_r1 = st.number_input("Win vs 1st", 0.1, 0.6, 1-avg_1st, key=f'p2r1_{p2_name}')
-        p2_r2 = st.number_input("Win vs 2nd", 0.2, 0.8, 1-avg_2nd, key=f'p2r2_{p2_name}')
+        p2_r1 = st.number_input("Win vs 1st", 0.1, 0.6, val(p2_data, 'ret_1st_win', 1-avg_1st), key=f'p2r1_{p2_name}')
+        p2_r2 = st.number_input("Win vs 2nd", 0.2, 0.8, val(p2_data, 'ret_2nd_win', 1-avg_2nd), key=f'p2r2_{p2_name}')
 
     # 6. EXTRAS & LIVE
     st.sidebar.markdown("---")
