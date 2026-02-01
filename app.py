@@ -3,12 +3,11 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import xgboost as xgb
 from datetime import datetime
 
 # --- 1. CONFIGURAZIONE GLOBALE ---
 st.set_page_config(
-    page_title="Tennis Quant Pro - Final Engine",
+    page_title="Tennis Quant Pro - Ultimate Hybrid",
     page_icon="🎾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -439,32 +438,40 @@ def main():
     ce1, ce2 = st.sidebar.columns(2)
     altitude = ce1.checkbox("Altitudine"); indoor = ce1.checkbox("Indoor"); windy = ce2.checkbox("Vento")
 
-    # 5. STATS
+    # 5. STATS (MODIFICA RICHIESTA: CHIAVI DINAMICHE)
     st.sidebar.markdown("---")
     st.sidebar.subheader("📊 Statistiche")
     p1_data = ml.get_player_prediction(raw_df, p1_name, surface)
     p2_data = ml.get_player_prediction(raw_df, p2_name, surface)
     def val(d, k, fb): return float(d[k]) if d else fb
 
+    # Check P1
+    if p1_data: st.sidebar.success(f"✅ Dati per {p1_name}")
+    else: st.sidebar.warning(f"❌ Dati non trovati per {p1_name} (Standard)")
+
     with st.sidebar.expander(f"Stats {p1_name}", expanded=True):
-        p1_1in = st.number_input(f"1st In %", 0.3, 0.9, val(p1_data,'1st_in',0.62), key='p1i')
-        p1_1w = st.number_input(f"1st Win %", 0.4, 0.95, val(p1_data,'1st_win',0.74), key='p1w')
-        p1_2w = st.number_input(f"2nd Win %", 0.2, 0.8, val(p1_data,'2nd_win',0.53), key='p1w2')
-        p1_ace = st.number_input(f"Ace %", 0.0, 0.4, val(p1_data,'ace_pct',0.08), key='p1a')
-        p1_df = st.number_input(f"DF %", 0.0, 0.3, val(p1_data,'df_pct',0.03), key='p1d')
+        p1_1in = st.number_input(f"1st In %", 0.3, 0.9, val(p1_data,'1st_in',0.62), key=f'p1i_{p1_name}')
+        p1_1w = st.number_input(f"1st Win %", 0.4, 0.95, val(p1_data,'1st_win',0.74), key=f'p1w_{p1_name}')
+        p1_2w = st.number_input(f"2nd Win %", 0.2, 0.8, val(p1_data,'2nd_win',0.53), key=f'p1w2_{p1_name}')
+        p1_ace = st.number_input(f"Ace %", 0.0, 0.4, val(p1_data,'ace_pct',0.08), key=f'p1a_{p1_name}')
+        p1_df = st.number_input(f"DF %", 0.0, 0.3, val(p1_data,'df_pct',0.03), key=f'p1d_{p1_name}')
         st.markdown("**Risposta**")
-        p1_r1 = st.number_input("Win vs 1st", 0.1, 0.6, 1-avg_1st, key='p1r1')
-        p1_r2 = st.number_input("Win vs 2nd", 0.2, 0.8, 1-avg_2nd, key='p1r2')
+        p1_r1 = st.number_input("Win vs 1st", 0.1, 0.6, 1-avg_1st, key=f'p1r1_{p1_name}')
+        p1_r2 = st.number_input("Win vs 2nd", 0.2, 0.8, 1-avg_2nd, key=f'p1r2_{p1_name}')
+
+    # Check P2
+    if p2_data: st.sidebar.success(f"✅ Dati per {p2_name}")
+    else: st.sidebar.warning(f"❌ Dati non trovati per {p2_name} (Standard)")
 
     with st.sidebar.expander(f"Stats {p2_name}", expanded=True):
-        p2_1in = st.number_input(f"1st In %", 0.3, 0.9, val(p2_data,'1st_in',0.64), key='p2i')
-        p2_1w = st.number_input(f"1st Win %", 0.4, 0.95, val(p2_data,'1st_win',0.73), key='p2w')
-        p2_2w = st.number_input(f"2nd Win %", 0.2, 0.8, val(p2_data,'2nd_win',0.52), key='p2w2')
-        p2_ace = st.number_input(f"Ace %", 0.0, 0.4, val(p2_data,'ace_pct',0.07), key='p2a')
-        p2_df = st.number_input(f"DF %", 0.0, 0.3, val(p2_data,'df_pct',0.04), key='p2d')
+        p2_1in = st.number_input(f"1st In %", 0.3, 0.9, val(p2_data,'1st_in',0.64), key=f'p2i_{p2_name}')
+        p2_1w = st.number_input(f"1st Win %", 0.4, 0.95, val(p2_data,'1st_win',0.73), key=f'p2w_{p2_name}')
+        p2_2w = st.number_input(f"2nd Win %", 0.2, 0.8, val(p2_data,'2nd_win',0.52), key=f'p2w2_{p2_name}')
+        p2_ace = st.number_input(f"Ace %", 0.0, 0.4, val(p2_data,'ace_pct',0.07), key=f'p2a_{p2_name}')
+        p2_df = st.number_input(f"DF %", 0.0, 0.3, val(p2_data,'df_pct',0.04), key=f'p2d_{p2_name}')
         st.markdown("**Risposta**")
-        p2_r1 = st.number_input("Win vs 1st", 0.1, 0.6, 1-avg_1st, key='p2r1')
-        p2_r2 = st.number_input("Win vs 2nd", 0.2, 0.8, 1-avg_2nd, key='p2r2')
+        p2_r1 = st.number_input("Win vs 1st", 0.1, 0.6, 1-avg_1st, key=f'p2r1_{p2_name}')
+        p2_r2 = st.number_input("Win vs 2nd", 0.2, 0.8, 1-avg_2nd, key=f'p2r2_{p2_name}')
 
     # 6. EXTRAS & LIVE
     st.sidebar.markdown("---")
@@ -487,7 +494,7 @@ def main():
         srv = 1 if srv_name==p1_name else 2
         live_st = {'sets_p1':s1,'sets_p2':s2,'games_p1':g1,'games_p2':g2,'pts_p1':pt1,'pts_p2':pt2,'server':srv}
         
-        # MICRO-ANALISI
+        # MICRO-ANALISI LIVE (MARKOV VS MONTE CARLO)
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔬 Micro-Analisi Game")
         if srv == 1:
