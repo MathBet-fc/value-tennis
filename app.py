@@ -3,11 +3,12 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import xgboost as xgb
 from datetime import datetime
 
 # --- 1. CONFIGURAZIONE GLOBALE ---
 st.set_page_config(
-    page_title="Tennis Quant Pro - Ultimate Hybrid",
+    page_title="Tennis Quant Pro - Final Engine",
     page_icon="🎾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -19,7 +20,7 @@ sns.set_style("darkgrid")
 class TennisMath:
     @staticmethod
     def kelly_criterion(prob, odds, fractional=0.25):
-        """Calcola Stake Ottimale (Kelly Frazionario) per gestire il bankroll."""
+        """Calcola Stake Ottimale (Kelly Frazionario)."""
         if prob <= 0 or odds <= 1: return 0.0
         b = odds - 1
         q = 1 - prob
@@ -28,7 +29,7 @@ class TennisMath:
 
     @staticmethod
     def adjust_stats_for_cpi(serve_pct, ace_pct, cpi):
-        """Adatta le statistiche alla velocità della superficie (CPI)."""
+        """Adatta le statistiche alla velocità del campo (CPI)."""
         factor = (cpi - 35) / 100 
         adj_serve = serve_pct + (factor * 0.8)
         adj_ace = ace_pct * (1 + factor * 1.5)
@@ -36,11 +37,11 @@ class TennisMath:
 
     @staticmethod
     def apply_tactical_adjustments(p_srv_win, p_ace, server_hand, returner_bh, conditions):
-        """Applica correzioni Tattiche (Mancino vs 1HBH) e Ambientali (Meteo)."""
+        """Applica correzioni Tattiche e Ambientali."""
         adj_srv = p_srv_win
         adj_ace = p_ace
         
-        # Tattica: Mancino vs Rovescio a una mano
+        # Tattica
         if server_hand == "Sinistra" and returner_bh == "Una Mano":
             adj_srv *= 1.04; adj_ace *= 1.05
         elif server_hand == "Destra" and returner_bh == "Una Mano":
@@ -55,7 +56,7 @@ class TennisMath:
 
     @staticmethod
     def log5_matchup(srv_win_pct, ret_win_pct, tour_avg_srv):
-        """Calcola la probabilità REALE di vincere il punto (Log5 Formula)."""
+        """Formula Log5 per probabilità reale punto."""
         tour_avg_ret = 1 - tour_avg_srv
         diff_ret = ret_win_pct - tour_avg_ret
         adj_prob = srv_win_pct - diff_ret
@@ -63,26 +64,21 @@ class TennisMath:
 
 # --- 3. CLASSE MARKOV (MATEMATICA PURA) ---
 class TennisMarkov:
-    """Risolutore matematico esatto per Game, Set e Match (Baseline Teorica)."""
+    """Risolutore matematico esatto per Game, Set e Match."""
     
     @staticmethod
     def prob_hold_game(p, s_srv=0, s_ret=0):
-        """
-        Calcola probabilità esatta di vincere il game partendo da un punteggio.
-        p: Probabilità vittoria punto
-        s_srv/s_ret: Punteggio attuale (0,1,2,3)
-        """
-        # Game tecnicamente finito
+        """Calcola probabilità esatta di vincere il game."""
         if s_srv >= 4 and s_srv >= s_ret + 2: return 1.0
         if s_ret >= 4 and s_ret >= s_srv + 2: return 0.0
         
-        # Logica Deuce (Parità)
+        # Deuce Logic
         if s_srv >= 3 and s_ret >= 3:
             if s_srv == s_ret: return p**2 / (p**2 + (1-p)**2)
             elif s_srv > s_ret: return p + (1-p) * (p**2 / (p**2 + (1-p)**2))
             else: return p * (p**2 / (p**2 + (1-p)**2))
         
-        # Ricorsione Memoizzata per i punti standard
+        # Ricorsione Memoizzata
         memo = {}
         def solve(i, j):
             if (i, j) in memo: return memo[(i, j)]
@@ -98,8 +94,7 @@ class TennisMarkov:
 
     @staticmethod
     def get_full_theoretical_prob(p1_stats, p2_stats, best_of=3):
-        """Calcola la probabilità teorica dell'intero match (Catena Gerarchica)."""
-        # Media pesata efficacia servizio (1a e 2a)
+        """Calcola probabilità teorica Match e Set."""
         p1_srv = p1_stats['1st_win']*p1_stats['1st_in'] + p1_stats['2nd_win']*(1-p1_stats['1st_in'])
         p2_srv = p2_stats['1st_win']*p2_stats['1st_in'] + p2_stats['2nd_win']*(1-p2_stats['1st_in'])
         
@@ -107,11 +102,11 @@ class TennisMarkov:
         p_hold_p1 = TennisMarkov.prob_hold_game(p1_srv)
         p_hold_p2 = TennisMarkov.prob_hold_game(p2_srv)
         
-        # 2. Prob Tie Break (Approssimazione Logistica)
+        # 2. Prob TB
         p_avg = (p1_srv + (1 - p2_srv)) / 2
         p_tb = 1 / (1 + np.exp(-12 * (p_avg - 0.5)))
         
-        # 3. Prob Set (Simulazione Deterministica Veloce per gestire 6-6 e Break)
+        # 3. Prob Set (Simulazione veloce per stabilità)
         n_iter = 1000
         p1_sets = 0
         for _ in range(n_iter):
@@ -145,7 +140,7 @@ class TennisMLPredictor:
 
     @st.cache_data(ttl=3600*12) 
     def load_and_prep_data(_self, repo_name):
-        """Scarica i dati ATP/WTA reali da GitHub."""
+        """Scarica dati ATP/WTA."""
         try:
             prefix = repo_name.replace('tennis_', '')
             base_url = f"https://raw.githubusercontent.com/JeffSackmann/{repo_name}/master"
@@ -165,12 +160,11 @@ class TennisMLPredictor:
         except: return None
 
     def calculate_tour_baselines(self, df, surface_filter=None):
-        """Calcola le Medie Dinamiche del tour per la superficie scelta."""
+        """Calcola medie dinamiche tour."""
         if df is None or df.empty: return None, None, None
         data = df[df['surface'] == surface_filter] if surface_filter else df
         if len(data) < 50: data = df 
         
-        # Statistiche Aggregate
         tot_1st_in = data['w_1stIn'].sum() + data['l_1stIn'].sum()
         tot_1st_won = data['w_1stWon'].sum() + data['l_1stWon'].sum()
         avg_1st_win = tot_1st_won / tot_1st_in if tot_1st_in > 0 else 0.70
@@ -186,20 +180,17 @@ class TennisMLPredictor:
         return avg_1st_win, avg_2nd_win, avg_total_srv
 
     def get_player_prediction(self, df, player_name, surface):
-        """Estrae e predice le statistiche del giocatore basandosi sullo storico."""
+        """Estrae stats giocatore."""
         if df is None: return None
         p_wins = df[df['winner_name'] == player_name].copy()
         p_loss = df[df['loser_name'] == player_name].copy()
         if p_wins.empty and p_loss.empty: return None
         
-        # Standardizzazione
         p_wins.rename(columns={'w_1stIn':'1in', 'w_svpt':'svpt', 'w_1stWon':'1w', 'w_2ndWon':'2w', 'w_ace':'ace', 'w_df':'df'}, inplace=True)
         p_loss.rename(columns={'l_1stIn':'1in', 'l_svpt':'svpt', 'l_1stWon':'1w', 'l_2ndWon':'2w', 'l_ace':'ace', 'l_df':'df'}, inplace=True)
         
         cols = ['tourney_date','surface','1in','svpt','1w','2w','ace','df']
         hist = pd.concat([p_wins[cols], p_loss[cols]]).sort_values('tourney_date', ascending=False).head(30)
-        
-        # Filtro Superficie
         surf_hist = hist[hist['surface'] == surface]
         if len(surf_hist) >= 5: hist = surf_hist
         
@@ -212,24 +203,25 @@ class TennisMLPredictor:
             '2nd_win': hist['2w'].sum() / (tot_svpt - hist['1in'].sum()) if (tot_svpt - hist['1in'].sum())>0 else 0,
             'ace_pct': hist['ace'].sum() / tot_svpt,
             'df_pct': hist['df'].sum() / tot_svpt,
-            'ret_1st_win': 0.30, # Placeholder (La risposta dipende molto dall'avversario)
+            'ret_1st_win': 0.30, 
             'ret_2nd_win': 0.50
         }
 
-# --- 5. MONTE CARLO ENGINE (SIMULAZIONE PSICO-FISICA) ---
+# --- 5. MONTE CARLO ENGINE (CORRETTO) ---
 class TennisMonteCarloEngine:
     def __init__(self, p1_stats, p2_stats, config, current_state=None):
-        self.p1 = p1_stats; self.p2 = p2_stats
+        # SALVATAGGIO STATS ORIGINALI
+        self.orig_p1 = p1_stats
+        self.orig_p2 = p2_stats
         self.n = config['simulations']
         self.match_sets = config.get('sets_to_win', 2)
         self.state = current_state
+        # Variabili di lavoro
+        self.p1 = None
+        self.p2 = None
 
     @staticmethod
     def simulate_current_game_mc(p_base, srv_score, ret_score, mental_factor, n=1000):
-        """
-        Simula SOLO il game corrente applicando la pressione (Boost Mentale).
-        Usato per il confronto Ibrido nel Live Betting.
-        """
         wins = 0
         for _ in range(n):
             s, r = srv_score, ret_score
@@ -237,12 +229,10 @@ class TennisMonteCarloEngine:
                 if s >= 4 and s >= r + 2: 
                     wins += 1; break
                 if r >= 4 and r >= s + 2: break
-                if s == 4 and r == 4: s = 3; r = 3 # Reset Deuce
+                if s == 4 and r == 4: s = 3; r = 3 
                 
-                # Applicazione Pressione
                 is_bp = (r == 3 and s < 3) or (r == 4 and s == 3)
                 current_p = p_base
-                # Se è Break Point, il Mental Factor influenza la probabilità
                 if is_bp: current_p = p_base * (1.0 + (mental_factor - 1.0) * 1.5)
                 
                 if np.random.random() < current_p: s += 1
@@ -250,16 +240,13 @@ class TennisMonteCarloEngine:
         return wins / n
 
     def _play_point(self, server_id, pressure_level=1.0):
-        """Simula la fisica del punto (1a e 2a palla)."""
         s = self.p1 if server_id == 1 else self.p2
         perf_boost = 1.0 + (s['mental'] - 1.0) * pressure_level
         
-        # 1a Palla
         if np.random.random() < s['1st_in']:
             if np.random.random() < s['ace_pct'] * perf_boost: return 'ace'
             win_prob = min(0.99, s['1st_win'] * perf_boost)
             return 'srv' if np.random.random() < win_prob else 'ret'
-        # 2a Palla
         else:
             real_df_prob = s['df_pct'] / perf_boost 
             if np.random.random() < real_df_prob: return 'df'
@@ -273,7 +260,6 @@ class TennisMonteCarloEngine:
             is_bp = (pts_ret == 3 and pts_srv < 3) or (pts_ret == 4 and pts_srv == 3)
             if is_bp: stats['bps_faced'] += 1
             pressure = 1.5 if is_bp else 0.5
-            
             res = self._play_point(server_id, pressure)
             if res in ['ace', 'srv']:
                 pts_srv += 1; 
@@ -281,7 +267,6 @@ class TennisMonteCarloEngine:
             else:
                 pts_ret += 1; 
                 if res == 'df': stats['dfs'] += 1
-            
             if pts_srv >= 4 and pts_srv >= pts_ret + 2: return server_id, stats
             if pts_ret >= 4 and pts_ret >= pts_srv + 2: return (2 if server_id==1 else 1), stats
             if pts_srv == 4 and pts_ret == 4: pts_srv = 3; pts_ret = 3
@@ -304,6 +289,8 @@ class TennisMonteCarloEngine:
     def run(self):
         results = []
         p1_wins = 0; count_tb = 0; count_comeback = 0; set_scores = {}
+        
+        # Stato Live Init
         s_sets1 = self.state['sets_p1'] if self.state else 0
         s_sets2 = self.state['sets_p2'] if self.state else 0
         s_gms1 = self.state['games_p1'] if self.state else 0
@@ -311,9 +298,13 @@ class TennisMonteCarloEngine:
         s_pts1 = self.state['pts_p1'] if self.state else 0
         s_pts2 = self.state['pts_p2'] if self.state else 0
         s_server = self.state['server'] if self.state else 1
-        sets_target = self.match_sets
         
         for _ in range(self.n):
+            # >>> RESET CRUCIALE STATISTICHE AD OGNI MATCH <<<
+            self.p1 = self.orig_p1.copy()
+            self.p2 = self.orig_p2.copy()
+            # ----------------------------------------------
+            
             sets_p1, sets_p2 = s_sets1, s_sets2
             g1, g2 = s_gms1, s_gms2
             curr_server = s_server
@@ -336,8 +327,8 @@ class TennisMonteCarloEngine:
                 curr_server = 2 if curr_server == 1 else 1
 
             # Match Loop
-            while sets_p1 < sets_target and sets_p2 < sets_target:
-                # Momentum (Crollo Psicologico dopo set perso male)
+            while sets_p1 < self.match_sets and sets_p2 < self.match_sets:
+                # Momentum Logic
                 if len(score_log) > 0:
                     last = score_log[-1]
                     sl1, sl2 = map(int, last.split('-'))
@@ -345,12 +336,11 @@ class TennisMonteCarloEngine:
                         if sl1 > sl2: self.p2['mental'] *= 0.95
                         else: self.p1['mental'] *= 0.95
                 
-                # Fatica (Set Decisivo)
-                if sets_p1 == sets_target - 1 and sets_p2 == sets_target - 1:
+                # Fatigue Logic
+                if sets_p1 == self.match_sets - 1 and sets_p2 == self.match_sets - 1:
                     self.p1['1st_win'] *= self.p1['fatigue_factor']
                     self.p2['1st_win'] *= self.p2['fatigue_factor']
 
-                # Set Loop
                 while True:
                     if (g1>=6 and g1-g2>=2) or (g1==7 and g2==6):
                         score_log.append(f"{g1}-{g2}"); sets_p1+=1; g1,g2=0,0; break
@@ -410,7 +400,7 @@ def main():
     sets_to_win = 2
     if circuit == "ATP (Uomini)" and st.sidebar.checkbox("Slam Mode (Best of 5)"): sets_to_win = 3
 
-    # 2. ML INIT (CARICAMENTO DINAMICO)
+    # 2. ML INIT
     ml = TennisMLPredictor()
     if 'curr_repo' not in st.session_state: st.session_state.curr_repo = repo_name
     if st.session_state.curr_repo != repo_name:
@@ -438,10 +428,9 @@ def main():
     st.sidebar.markdown("---")
     surface = st.sidebar.selectbox("Superficie", ["Hard", "Clay", "Grass"])
     
-    # Medie Dinamiche Tour
     avg_1st, avg_2nd, avg_tot = None, None, None
     if raw_df is not None: avg_1st, avg_2nd, avg_tot = ml.calculate_tour_baselines(raw_df, surface)
-    if avg_1st is None: # Fallback se offline
+    if avg_1st is None: # Fallback
         avg_1st = 0.73 if circuit == "ATP (Uomini)" else 0.63
         avg_2nd = 0.52 if circuit == "ATP (Uomini)" else 0.46
     
@@ -450,7 +439,7 @@ def main():
     ce1, ce2 = st.sidebar.columns(2)
     altitude = ce1.checkbox("Altitudine"); indoor = ce1.checkbox("Indoor"); windy = ce2.checkbox("Vento")
 
-    # 5. STATS (AUTO-FILL)
+    # 5. STATS
     st.sidebar.markdown("---")
     st.sidebar.subheader("📊 Statistiche")
     p1_data = ml.get_player_prediction(raw_df, p1_name, surface)
@@ -498,7 +487,7 @@ def main():
         srv = 1 if srv_name==p1_name else 2
         live_st = {'sets_p1':s1,'sets_p2':s2,'games_p1':g1,'games_p2':g2,'pts_p1':pt1,'pts_p2':pt2,'server':srv}
         
-        # MICRO-ANALISI LIVE (MARKOV VS MONTE CARLO)
+        # MICRO-ANALISI
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔬 Micro-Analisi Game")
         if srv == 1:
@@ -511,8 +500,8 @@ def main():
             prob_mc = TennisMonteCarloEngine.simulate_current_game_mc(base_p, pt2, pt1, men2*m2)
             
         c_m1, c_m2 = st.sidebar.columns(2)
-        c_m1.metric("Markov", f"{prob_markov:.1%}", help="Probabilità Matematica")
-        c_m2.metric("MC Live", f"{prob_mc:.1%}", help="Probabilità con Pressione")
+        c_m1.metric("Markov", f"{prob_markov:.1%}")
+        c_m2.metric("MC Live", f"{prob_mc:.1%}")
         delta_m = prob_mc - prob_markov
         if abs(delta_m) > 0.05: 
             if delta_m > 0: st.sidebar.success(f"🧠 Boost: +{delta_m:.1%}")
