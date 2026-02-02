@@ -19,7 +19,10 @@ sns.set_style("darkgrid")
 class TennisMath:
     @staticmethod
     def kelly_criterion(prob, odds, fractional=0.25):
-        """Calcola Stake Ottimale (Kelly Frazionario)."""
+        """
+        Calcola la % del bankroll da puntare.
+        fractional=0.25 significa usare un quarto del Kelly ottimale (prudente).
+        """
         if prob <= 0 or odds <= 1: return 0.0
         b = odds - 1
         q = 1 - prob
@@ -181,43 +184,34 @@ class TennisMLPredictor:
     def get_player_prediction(self, df, player_name, surface):
         """
         Estrae stats servizio E RISPOSTA (Calcolata sull'opposto).
-        Questa è la funzione avanzata che calcola la risposta reale.
         """
         if df is None: return None
         
         # 1. Match dove il giocatore ha VINTO
         p_wins = df[df['winner_name'] == player_name].copy()
-        # Per la risposta: guardiamo i dati del perdente (avversario)
         p_wins['opp_1st_in'] = p_wins['l_1stIn']
         p_wins['opp_1st_won'] = p_wins['l_1stWon']
         p_wins['opp_2nd_in'] = p_wins['l_svpt'] - p_wins['l_1stIn']
         p_wins['opp_2nd_won'] = p_wins['l_2ndWon']
-        # Standardizza nomi (Servizio Giocatore)
         p_wins.rename(columns={'w_1stIn':'1in', 'w_svpt':'svpt', 'w_1stWon':'1w', 'w_2ndWon':'2w', 'w_ace':'ace', 'w_df':'df'}, inplace=True)
         
         # 2. Match dove il giocatore ha PERSO
         p_loss = df[df['loser_name'] == player_name].copy()
-        # Per la risposta: guardiamo i dati del vincitore (avversario)
         p_loss['opp_1st_in'] = p_loss['w_1stIn']
         p_loss['opp_1st_won'] = p_loss['w_1stWon']
         p_loss['opp_2nd_in'] = p_loss['w_svpt'] - p_loss['w_1stIn']
         p_loss['opp_2nd_won'] = p_loss['w_2ndWon']
-        # Standardizza nomi (Servizio Giocatore)
         p_loss.rename(columns={'l_1stIn':'1in', 'l_svpt':'svpt', 'l_1stWon':'1w', 'l_2ndWon':'2w', 'l_ace':'ace', 'l_df':'df'}, inplace=True)
         
         if p_wins.empty and p_loss.empty: return None
 
         # 3. Unione e Filtro Superficie
-        cols = ['tourney_date','surface','1in','svpt','1w','2w','ace','df', 
-                'opp_1st_in', 'opp_1st_won', 'opp_2nd_in', 'opp_2nd_won']
-        
         hist = pd.concat([p_wins, p_loss], ignore_index=True)
-        hist = hist.sort_values('tourney_date', ascending=False).head(50) # Ultime 50 partite
+        hist = hist.sort_values('tourney_date', ascending=False).head(50) 
         
         surf_hist = hist[hist['surface'] == surface]
-        if len(surf_hist) >= 5: hist = surf_hist # Preferenza superficie
+        if len(surf_hist) >= 5: hist = surf_hist
         
-        # 4. Calcoli Finali (Medie Pesate)
         tot_svpt = hist['svpt'].sum()
         if tot_svpt == 0: return None
         
@@ -227,7 +221,6 @@ class TennisMLPredictor:
         tot_opp_2nd_in = hist['opp_2nd_in'].sum()
         tot_opp_2nd_won = hist['opp_2nd_won'].sum()
         
-        # Calcolo % Risposta (1 - % Punti vinti dall'avversario al servizio)
         ret_1st = 1.0 - (tot_opp_1st_won / tot_opp_1st_in) if tot_opp_1st_in > 0 else 0.30
         ret_2nd = 1.0 - (tot_opp_2nd_won / tot_opp_2nd_in) if tot_opp_2nd_in > 0 else 0.50
 
@@ -244,13 +237,11 @@ class TennisMLPredictor:
 # --- 5. MONTE CARLO ENGINE (CORRETTO - RESET STATS) ---
 class TennisMonteCarloEngine:
     def __init__(self, p1_stats, p2_stats, config, current_state=None):
-        # SALVATAGGIO STATS ORIGINALI
         self.orig_p1 = p1_stats
         self.orig_p2 = p2_stats
         self.n = config['simulations']
         self.match_sets = config.get('sets_to_win', 2)
         self.state = current_state
-        # Variabili di lavoro
         self.p1 = None
         self.p2 = None
 
@@ -334,10 +325,8 @@ class TennisMonteCarloEngine:
         s_server = self.state['server'] if self.state else 1
         
         for _ in range(self.n):
-            # >>> RESET CRUCIALE STATISTICHE AD OGNI MATCH <<<
             self.p1 = self.orig_p1.copy()
             self.p2 = self.orig_p2.copy()
-            # ----------------------------------------------
             
             sets_p1, sets_p2 = s_sets1, s_sets2
             g1, g2 = s_gms1, s_gms2
@@ -362,7 +351,6 @@ class TennisMonteCarloEngine:
 
             # Match Loop
             while sets_p1 < self.match_sets and sets_p2 < self.match_sets:
-                # Momentum Logic
                 if len(score_log) > 0:
                     last = score_log[-1]
                     sl1, sl2 = map(int, last.split('-'))
@@ -370,7 +358,6 @@ class TennisMonteCarloEngine:
                         if sl1 > sl2: self.p2['mental'] *= 0.95
                         else: self.p1['mental'] *= 0.95
                 
-                # Fatigue Logic
                 if sets_p1 == self.match_sets - 1 and sets_p2 == self.match_sets - 1:
                     self.p1['1st_win'] *= self.p1['fatigue_factor']
                     self.p2['1st_win'] *= self.p2['fatigue_factor']
@@ -473,7 +460,7 @@ def main():
     ce1, ce2 = st.sidebar.columns(2)
     altitude = ce1.checkbox("Altitudine"); indoor = ce1.checkbox("Indoor"); windy = ce2.checkbox("Vento")
 
-    # 5. STATS (CHIAVI DINAMICHE PER AGGIORNAMENTO DATI)
+    # 5. STATS
     st.sidebar.markdown("---")
     st.sidebar.subheader("📊 Statistiche")
     p1_data = ml.get_player_prediction(raw_df, p1_name, surface)
@@ -515,7 +502,11 @@ def main():
     m2 = mot_map[st.sidebar.selectbox(f"Motivazione {p2_name}", list(mot_map.keys()), index=1)]
     men1 = st.sidebar.slider(f"Mental {p1_name}", 0.9, 1.1, 1.0)
     men2 = st.sidebar.slider(f"Mental {p2_name}", 0.9, 1.1, 1.0)
-    odds = st.sidebar.number_input(f"Quota {p1_name}", 1.01, 20.0, 1.80)
+    
+    # --- NUOVA GESTIONE BUDGET E QUOTE ---
+    col_soldi1, col_soldi2 = st.sidebar.columns(2)
+    bankroll = col_soldi1.number_input("Budget (€)", 10, 100000, 1000)
+    odds = col_soldi2.number_input(f"Quota {p1_name}", 1.01, 20.0, 1.80)
     
     live_on = st.sidebar.checkbox("LIVE SCORE")
     live_st = None
@@ -529,7 +520,7 @@ def main():
         srv = 1 if srv_name==p1_name else 2
         live_st = {'sets_p1':s1,'sets_p2':s2,'games_p1':g1,'games_p2':g2,'pts_p1':pt1,'pts_p2':pt2,'server':srv}
         
-        # MICRO-ANALISI LIVE (MARKOV VS MONTE CARLO)
+        # MICRO-ANALISI
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔬 Micro-Analisi Game")
         if srv == 1:
@@ -591,10 +582,14 @@ def main():
             delta = abs(mc_prob - markov_match_p)
             stability = "✅ ALTA" if delta < 0.05 else ("⚠️ MEDIA" if delta < 0.10 else "🚨 BASSA")
             
+            # CALCOLO KELLY CON BANKROLL
+            kelly_pct = TennisMath.kelly_criterion(mc_prob, odds, fractional=0.25)
+            money_stake = bankroll * kelly_pct
+            
             c1.metric("Monte Carlo", f"{mc_prob:.1%}")
             c2.metric("Markov Puro", f"{markov_match_p:.1%}")
             c3.metric("Convergenza", stability, delta=f"Delta: {delta:.1%}")
-            c4.metric("Kelly", f"€{TennisMath.kelly_criterion(mc_prob, odds)*1000:.0f}")
+            c4.metric("Kelly Stake", f"€{money_stake:.2f}", help=f"Puntata consigliata (25% Kelly) su Bankroll €{bankroll}")
             
             t1,t2,t3,t4,t5 = st.tabs(["Convergenza", "Partita", "Giocatori", "Heatmap", "Insight"])
             
