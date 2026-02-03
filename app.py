@@ -7,7 +7,7 @@ from datetime import datetime
 
 # --- 1. CONFIGURAZIONE GLOBALE ---
 st.set_page_config(
-    page_title="Tennis Quant Pro - Professional Edition",
+    page_title="Tennis Quant Pro - Final Link Edition",
     page_icon="🎾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -390,6 +390,12 @@ def main():
     sets_to_win = 2
     if circuit == "ATP (Uomini)" and st.sidebar.checkbox("Slam Mode (Best of 5)"): sets_to_win = 3
 
+    # URL Dinamico per Elo
+    if circuit == "ATP (Uomini)":
+        elo_url = "https://tennisabstract.com/reports/atp_elo_ratings.html"
+    else:
+        elo_url = "https://tennisabstract.com/reports/wta_elo_ratings.html"
+
     ml = TennisMLPredictor()
     
     if 'curr_repo' not in st.session_state: st.session_state.curr_repo = repo_name
@@ -405,6 +411,7 @@ def main():
 
     col_p1, col_p2 = st.sidebar.columns(2)
     
+    # SETUP LISTA GIOCATORI
     if circuit == "ATP (Uomini)":
         target_p1, target_p2 = "Jannik Sinner", "Carlos Alcaraz"
     else:
@@ -424,10 +431,7 @@ def main():
         p1_hand = st.selectbox("Mano P1", ["Destra", "Sinistra"])
         p1_bh = st.selectbox("Rovescio P1", ["Due Mani", "Una Mano"])
         
-        # Link TennisAbstract Dinamico
-        elo_url = "https://www.tennisabstract.com/cgi-bin/leaders_elo.cgi"
-        if circuit != "ATP (Uomini)": elo_url += "?f=WTA"
-        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({https://tennisabstract.com/reports/atp_elo_ratings.html })")
+        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({elo_url})")
         elo1 = st.number_input(f"Elo {p1_name}", value=1500, step=10)
 
     with col_p2:
@@ -436,8 +440,7 @@ def main():
         p2_hand = st.selectbox("Mano P2", ["Destra", "Sinistra"])
         p2_bh = st.selectbox("Rovescio P2", ["Due Mani", "Una Mano"])
         
-        # Link TennisAbstract Dinamico
-        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({https://tennisabstract.com/reports/wta_elo_ratings.html })")
+        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({elo_url})")
         elo2 = st.number_input(f"Elo {p2_name}", value=1500, step=10)
 
     st.sidebar.markdown("---")
@@ -647,4 +650,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- 
