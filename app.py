@@ -7,7 +7,7 @@ from datetime import datetime
 
 # --- 1. CONFIGURAZIONE GLOBALE ---
 st.set_page_config(
-    page_title="Tennis Quant Pro - Elo Master",
+    page_title="Tennis Quant Pro - Elo Manual Override",
     page_icon="🎾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -125,42 +125,30 @@ class TennisMarkov:
         if best_of == 3: return p**2 + 2*(p**2)*(1-p), p_set
         else: return p**3 + 3*(p**3)*(1-p) + 6*(p**3)*((1-p)**2), p_set
 
-# --- 4. NEW ELO ENGINE (CALCOLO INTERNO) ---
+# --- 4. ELO ENGINE ---
 class TennisElo:
     def __init__(self):
         self.ratings = {}
         self.k_factor = 32
 
     def calculate_elo_from_history(self, df):
-        """Calcola Elo iterando su tutto lo storico df."""
         if df is None or df.empty: return
-        
-        # Ordina per data per simulare la progressione temporale
         df_sorted = df.sort_values('tourney_date', ascending=True)
-        
-        self.ratings = {} # Reset
-        
+        self.ratings = {} 
         for _, row in df_sorted.iterrows():
             w = row['winner_name']
             l = row['loser_name']
-            
-            # Init base Elo 1500
             if w not in self.ratings: self.ratings[w] = 1500
             if l not in self.ratings: self.ratings[l] = 1500
-            
             r_w = self.ratings[w]
             r_l = self.ratings[l]
-            
-            # Probabilità attesa vittoria
             e_w = 1 / (1 + 10 ** ((r_l - r_w) / 400))
             e_l = 1 / (1 + 10 ** ((r_w - r_l) / 400))
-            
-            # Aggiornamento (Winner=1, Loser=0)
             self.ratings[w] = r_w + self.k_factor * (1 - e_w)
             self.ratings[l] = r_l + self.k_factor * (0 - e_l)
 
     def get_current_elo(self, player_name):
-        return self.ratings.get(player_name, 1500) # Default 1500 se nuovo
+        return self.ratings.get(player_name, 1500)
 
 # --- 5. ML ENGINE ---
 class TennisMLPredictor:
@@ -430,7 +418,6 @@ def main():
             raw_df = ml.load_and_prep_data(repo_name)
             if raw_df is not None: 
                 st.success("✅ DB Connesso")
-                # Calcola Elo
                 with st.spinner("Calcolo Elo Ratings..."):
                     elo_engine.calculate_elo_from_history(raw_df)
             else: st.warning("⚠️ Offline Mode")
@@ -454,9 +441,9 @@ def main():
         p1_hand = st.selectbox("Mano P1", ["Destra", "Sinistra"])
         p1_bh = st.selectbox("Rovescio P1", ["Due Mani", "Una Mano"])
         
-        # Mostra Elo
-        elo1 = elo_engine.get_current_elo(p1_name)
-        st.caption(f"Elo Rating: {int(elo1)}")
+        # ELO EDITABILE P1
+        auto_elo1 = elo_engine.get_current_elo(p1_name)
+        elo1 = st.number_input(f"Elo {p1_name}", value=int(auto_elo1), step=10, help="Modifica con valore Tennis Abstract se necessario")
 
     with col_p2:
         default_idx_p2 = player_list.index(target_p2) if target_p2 in player_list else 0
@@ -464,9 +451,9 @@ def main():
         p2_hand = st.selectbox("Mano P2", ["Destra", "Sinistra"])
         p2_bh = st.selectbox("Rovescio P2", ["Due Mani", "Una Mano"])
         
-        # Mostra Elo
-        elo2 = elo_engine.get_current_elo(p2_name)
-        st.caption(f"Elo Rating: {int(elo2)}")
+        # ELO EDITABILE P2
+        auto_elo2 = elo_engine.get_current_elo(p2_name)
+        elo2 = st.number_input(f"Elo {p2_name}", value=int(auto_elo2), step=10, help="Modifica con valore Tennis Abstract se necessario")
 
     st.sidebar.markdown("---")
     surface = st.sidebar.selectbox("Superficie", ["Hard", "Clay", "Grass"])
@@ -516,11 +503,11 @@ def main():
 
     st.sidebar.markdown("---")
     
-    # --- AUTO RANKING BOOST VIA ELO ---
+    # --- AUTO RANKING BOOST VIA ELO (MANUAL OVERRIDE ENABLED) ---
     elo_diff = elo1 - elo2
-    # Convertiamo la differenza Elo in una % di boost (es. +100 elo = +2.5%)
-    ranking_diff = elo_diff / 40.0
-    st.sidebar.info(f"📊 Auto-Boost Ranking (Elo Diff {int(elo_diff)}): {ranking_diff:+.1f}%")
+    # Boost: +236 punti elo = +5.9% boost a tutte le stats
+    rank_boost = elo_diff / 40.0
+    st.sidebar.info(f"📊 Auto-Boost Ranking (Elo Diff {int(elo_diff)}): {rank_boost:+.1f}%")
 
     mot_map = {"Bassa":0.92, "Normale":1.0, "Alta":1.05, "Max":1.10}
     m1 = mot_map[st.sidebar.selectbox(f"Motivazione {p1_name}", list(mot_map.keys()), index=1)]
@@ -570,8 +557,11 @@ def main():
         with st.spinner("Calcolo Fisica, Momentum & Log5 Matchup..."):
             conds = {'altitude':altitude, 'indoor':indoor, 'windy':windy}
             
-            # Application Ranking Boost (FROM ELO)
-            rank_boost = ranking_diff / 100.0
+            # Application Ranking Boost (FROM MANUAL ELO)
+            # Diff di 236 punti (Potapova) = +5.9% a tutte le statistiche. 
+            # È un boost enorme che porterà la % all'80%+
+            rank_boost = (elo1 - elo2) / 40.0 / 100.0 # /100 perché usiamo decimali qui (0.05)
+            
             p1_1w_used = p1_1w + rank_boost
             p1_2w_used = p1_2w + rank_boost
             
@@ -587,6 +577,7 @@ def main():
             
             p1_1w_f = TennisMath.log5_matchup(p1_1w_c, p2_r1 * m2, avg_1st)
             p1_2w_f = TennisMath.log5_matchup(p1_2w_c, p2_r2 * m2, avg_2nd)
+            # Applico boost anche in risposta
             p2_1w_f = TennisMath.log5_matchup(p2_1w_c, (p1_r1 + rank_boost) * m1, avg_1st)
             p2_2w_f = TennisMath.log5_matchup(p2_2w_c, (p1_r2 + rank_boost) * m1, avg_2nd)
             
