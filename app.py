@@ -54,25 +54,18 @@ class TennisMath:
 
     @staticmethod
     def generate_market_table(data_series, market_name, step=1):
-        """Genera tabella Odds/Prob per Under/Over centrata sulla media."""
         mean_val = data_series.mean()
-        # Creiamo un range dinamico attorno alla media (es. +/- 5 linee)
         start = max(0.5, np.floor(mean_val) - 5 + 0.5)
-        lines = [start + i*step for i in range(11)] # 11 linee
-        
+        lines = [start + i*step for i in range(11)]
         results = []
         total = len(data_series)
-        
         for line in lines:
             over = (data_series > line).sum()
             under = (data_series < line).sum()
             p_over = over / total
             p_under = under / total
-            
-            # Calcolo Quote (Fair Odds)
             o_odd = 1/p_over if p_over > 0.01 else 999.0
             u_odd = 1/p_under if p_under > 0.01 else 999.0
-            
             results.append({
                 "Linea": line,
                 "Over %": f"{p_over:.1%}",
@@ -82,7 +75,7 @@ class TennisMath:
             })
         return pd.DataFrame(results)
 
-# --- 3. CLASSE MARKOV (MATEMATICA PURA) ---
+# --- 3. CLASSE MARKOV ---
 class TennisMarkov:
     @staticmethod
     def prob_hold_game(p, s_srv=0, s_ret=0):
@@ -92,7 +85,6 @@ class TennisMarkov:
             if s_srv == s_ret: return p**2 / (p**2 + (1-p)**2)
             elif s_srv > s_ret: return p + (1-p) * (p**2 / (p**2 + (1-p)**2))
             else: return p * (p**2 / (p**2 + (1-p)**2))
-        
         memo = {}
         def solve(i, j):
             if (i, j) in memo: return memo[(i, j)]
@@ -112,7 +104,6 @@ class TennisMarkov:
         p_hold_p2 = TennisMarkov.prob_hold_game(p2_srv)
         p_avg = (p1_srv + (1 - p2_srv)) / 2
         p_tb = 1 / (1 + np.exp(-12 * (p_avg - 0.5)))
-        
         n_iter = 1000
         p1_sets = 0
         for _ in range(n_iter):
@@ -134,7 +125,7 @@ class TennisMarkov:
         if best_of == 3: return p**2 + 2*(p**2)*(1-p), p_set
         else: return p**3 + 3*(p**3)*(1-p) + 6*(p**3)*((1-p)**2), p_set
 
-# --- 4. ML ENGINE (DATI & PREVISIONI) ---
+# --- 4. ML ENGINE ---
 class TennisMLPredictor:
     def __init__(self):
         self.data = None
@@ -163,7 +154,6 @@ class TennisMLPredictor:
         if df is None or df.empty: return None, None, None
         data = df[df['surface'] == surface_filter] if surface_filter else df
         if len(data) < 50: data = df 
-        
         tot_1st_in = data['w_1stIn'].sum() + data['l_1stIn'].sum()
         tot_1st_won = data['w_1stWon'].sum() + data['l_1stWon'].sum()
         avg_1st_win = tot_1st_won / tot_1st_in if tot_1st_in > 0 else 0.70
@@ -183,32 +173,25 @@ class TennisMLPredictor:
         p_wins['opp_2nd_in'] = p_wins['l_svpt'] - p_wins['l_1stIn']
         p_wins['opp_2nd_won'] = p_wins['l_2ndWon']
         p_wins.rename(columns={'w_1stIn':'1in', 'w_svpt':'svpt', 'w_1stWon':'1w', 'w_2ndWon':'2w', 'w_ace':'ace', 'w_df':'df'}, inplace=True)
-        
         p_loss = df[df['loser_name'] == player_name].copy()
         p_loss['opp_1st_in'] = p_loss['w_1stIn']
         p_loss['opp_1st_won'] = p_loss['w_1stWon']
         p_loss['opp_2nd_in'] = p_loss['w_svpt'] - p_loss['w_1stIn']
         p_loss['opp_2nd_won'] = p_loss['w_2ndWon']
         p_loss.rename(columns={'l_1stIn':'1in', 'l_svpt':'svpt', 'l_1stWon':'1w', 'l_2ndWon':'2w', 'l_ace':'ace', 'l_df':'df'}, inplace=True)
-        
         if p_wins.empty and p_loss.empty: return None
-
         hist = pd.concat([p_wins, p_loss], ignore_index=True)
         hist = hist.sort_values('tourney_date', ascending=False).head(50) 
         surf_hist = hist[hist['surface'] == surface]
         if len(surf_hist) >= 5: hist = surf_hist
-        
         tot_svpt = hist['svpt'].sum()
         if tot_svpt == 0: return None
-        
         tot_opp_1st_in = hist['opp_1st_in'].sum()
         tot_opp_1st_won = hist['opp_1st_won'].sum()
         tot_opp_2nd_in = hist['opp_2nd_in'].sum()
         tot_opp_2nd_won = hist['opp_2nd_won'].sum()
-        
         ret_1st = 1.0 - (tot_opp_1st_won / tot_opp_1st_in) if tot_opp_1st_in > 0 else 0.30
         ret_2nd = 1.0 - (tot_opp_2nd_won / tot_opp_2nd_in) if tot_opp_2nd_in > 0 else 0.50
-
         return {
             '1st_in': hist['1in'].sum() / tot_svpt,
             '1st_win': hist['1w'].sum() / hist['1in'].sum() if hist['1in'].sum()>0 else 0,
@@ -218,7 +201,7 @@ class TennisMLPredictor:
             'ret_1st_win': ret_1st, 'ret_2nd_win': ret_2nd
         }
 
-# --- 5. MONTE CARLO ENGINE (CORRETTO & COMPLETO) ---
+# --- 5. MONTE CARLO ENGINE ---
 class TennisMonteCarloEngine:
     def __init__(self, p1_stats, p2_stats, config, current_state=None):
         self.orig_p1 = p1_stats
@@ -294,7 +277,6 @@ class TennisMonteCarloEngine:
     def run(self):
         results = []
         p1_wins = 0; count_tb = 0; count_comeback = 0; set_scores = {}
-        
         s_sets1 = self.state['sets_p1'] if self.state else 0
         s_sets2 = self.state['sets_p2'] if self.state else 0
         s_gms1 = self.state['games_p1'] if self.state else 0
@@ -372,7 +354,7 @@ class TennisMonteCarloEngine:
             set_scores[score_key] = set_scores.get(score_key, 0) + 1
             results.append({
                 'winner': winner, 'tot_games': total_games,
-                'tot_sets': sets_p1 + sets_p2, # Added for Set Market
+                'tot_sets': sets_p1 + sets_p2,
                 'p1_aces': match_stats['p1_aces'], 'p2_aces': match_stats['p2_aces'],
                 'tot_aces': match_stats['p1_aces'] + match_stats['p2_aces'],
                 'p1_breaks': match_stats['p1_breaks'], 'p2_breaks': match_stats['p2_breaks'],
@@ -410,22 +392,29 @@ def main():
             if raw_df is not None: st.success("✅ DB Connesso")
             else: st.warning("⚠️ Offline Mode")
 
-    # SELEZIONE GIOCATORI CON DROPDOWN
     col_p1, col_p2 = st.sidebar.columns(2)
-    player_list = ["Jannik Sinner", "Carlos Alcaraz"]
+    
+    # SETUP LISTA GIOCATORI & DEFAULTS
+    if circuit == "ATP (Uomini)":
+        target_p1, target_p2 = "Jannik Sinner", "Carlos Alcaraz"
+    else:
+        target_p1, target_p2 = "Iga Swiatek", "Aryna Sabalenka"
+
+    player_list = [target_p1, target_p2]
     if raw_df is not None:
         all_p = pd.concat([raw_df['winner_name'], raw_df['loser_name']]).unique()
         all_p.sort()
         player_list = list(all_p)
 
     with col_p1:
-        default_idx_p1 = player_list.index("Jannik Sinner") if "Jannik Sinner" in player_list else 0
-        p1_name = st.selectbox("Giocatore 1", player_list, index=default_idx_p1)
+        default_idx_p1 = player_list.index(target_p1) if target_p1 in player_list else 0
+        # Aggiunto key univoca per circuito per evitare crash
+        p1_name = st.selectbox("Giocatore 1", player_list, index=default_idx_p1, key=f"p1_sel_{repo_name}")
         p1_hand = st.selectbox("Mano P1", ["Destra", "Sinistra"])
         p1_bh = st.selectbox("Rovescio P1", ["Due Mani", "Una Mano"])
     with col_p2:
-        default_idx_p2 = player_list.index("Carlos Alcaraz") if "Carlos Alcaraz" in player_list else 0
-        p2_name = st.selectbox("Giocatore 2", player_list, index=default_idx_p2)
+        default_idx_p2 = player_list.index(target_p2) if target_p2 in player_list else 0
+        p2_name = st.selectbox("Giocatore 2", player_list, index=default_idx_p2, key=f"p2_sel_{repo_name}")
         p2_hand = st.selectbox("Mano P2", ["Destra", "Sinistra"])
         p2_bh = st.selectbox("Rovescio P2", ["Due Mani", "Una Mano"])
 
@@ -572,7 +561,6 @@ def main():
                 cc2.metric("Rimonta", f"{kpi['comeback_prob']:.1%}")
                 st.write(kpi['set_betting'])
 
-            # --- NUOVA TAB MERCATI UNDER/OVER ---
             with t3:
                 st.subheader("📉 Analisi Under/Over (Fair Odds)")
                 m1, m2 = st.columns(2)
