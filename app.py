@@ -7,7 +7,7 @@ from datetime import datetime
 
 # --- 1. CONFIGURAZIONE GLOBALE ---
 st.set_page_config(
-    page_title="Tennis Quant Pro - Stable v14",
+    page_title="Tennis Quant Pro - Professional Edition",
     page_icon="🎾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -125,32 +125,7 @@ class TennisMarkov:
         if best_of == 3: return p**2 + 2*(p**2)*(1-p), p_set
         else: return p**3 + 3*(p**3)*(1-p) + 6*(p**3)*((1-p)**2), p_set
 
-# --- 4. ELO ENGINE ---
-class TennisElo:
-    def __init__(self):
-        self.ratings = {}
-        self.k_factor = 32
-
-    def calculate_elo_from_history(self, df):
-        if df is None or df.empty: return
-        df_sorted = df.sort_values('tourney_date', ascending=True)
-        self.ratings = {} 
-        for _, row in df_sorted.iterrows():
-            w = row['winner_name']
-            l = row['loser_name']
-            if w not in self.ratings: self.ratings[w] = 1500
-            if l not in self.ratings: self.ratings[l] = 1500
-            r_w = self.ratings[w]
-            r_l = self.ratings[l]
-            e_w = 1 / (1 + 10 ** ((r_l - r_w) / 400))
-            e_l = 1 / (1 + 10 ** ((r_w - r_l) / 400))
-            self.ratings[w] = r_w + self.k_factor * (1 - e_w)
-            self.ratings[l] = r_l + self.k_factor * (0 - e_l)
-
-    def get_current_elo(self, player_name):
-        return self.ratings.get(player_name, 1500)
-
-# --- 5. ML ENGINE ---
+# --- 4. ML ENGINE ---
 class TennisMLPredictor:
     def __init__(self):
         self.data = None
@@ -226,7 +201,7 @@ class TennisMLPredictor:
             'ret_1st_win': ret_1st, 'ret_2nd_win': ret_2nd
         }
 
-# --- 6. MONTE CARLO ENGINE ---
+# --- 5. MONTE CARLO ENGINE ---
 class TennisMonteCarloEngine:
     def __init__(self, p1_stats, p2_stats, config, current_state=None):
         self.orig_p1 = p1_stats
@@ -396,9 +371,9 @@ class TennisMonteCarloEngine:
             'avg_breaks_p1': df['p1_breaks'].mean(), 'avg_breaks_p2': df['p2_breaks'].mean()
         }, df
 
-# --- 7. MAIN INTERFACE ---
+# --- 6. MAIN INTERFACE ---
 def main():
-    # --- INIT VARIABLES TO AVOID NAMEERROR ---
+    # --- INIT VARIABLES ---
     p1_name, p2_name = "Giocatore 1", "Giocatore 2"
     p1_1w, p2_1w = 0.65, 0.65
     p1_1in, p2_1in = 0.60, 0.60
@@ -407,7 +382,6 @@ def main():
     p1_df, p2_df = 0.03, 0.03
     p1_r1, p2_r1 = 0.30, 0.30
     p1_r2, p2_r2 = 0.50, 0.50
-    elo1, elo2 = 1500, 1500
     
     st.sidebar.title("🛠️ Setup Match")
     
@@ -417,7 +391,6 @@ def main():
     if circuit == "ATP (Uomini)" and st.sidebar.checkbox("Slam Mode (Best of 5)"): sets_to_win = 3
 
     ml = TennisMLPredictor()
-    elo_engine = TennisElo()
     
     if 'curr_repo' not in st.session_state: st.session_state.curr_repo = repo_name
     if st.session_state.curr_repo != repo_name:
@@ -427,15 +400,11 @@ def main():
     with st.sidebar:
         with st.spinner(f"Caricamento {circuit}..."):
             raw_df = ml.load_and_prep_data(repo_name)
-            if raw_df is not None: 
-                st.success("✅ DB Connesso")
-                with st.spinner("Calcolo Elo Ratings..."):
-                    elo_engine.calculate_elo_from_history(raw_df)
+            if raw_df is not None: st.success("✅ DB Connesso")
             else: st.warning("⚠️ Offline Mode")
 
     col_p1, col_p2 = st.sidebar.columns(2)
     
-    # SETUP DEFAULTS
     if circuit == "ATP (Uomini)":
         target_p1, target_p2 = "Jannik Sinner", "Carlos Alcaraz"
     else:
@@ -455,9 +424,11 @@ def main():
         p1_hand = st.selectbox("Mano P1", ["Destra", "Sinistra"])
         p1_bh = st.selectbox("Rovescio P1", ["Due Mani", "Una Mano"])
         
-        # ELO P1
-        auto_elo1 = elo_engine.get_current_elo(p1_name)
-        elo1 = st.number_input(f"Elo {p1_name}", value=int(auto_elo1), step=10, help="Inserisci Elo TennisAbstract")
+        # Link TennisAbstract Dinamico
+        elo_url = "https://www.tennisabstract.com/cgi-bin/leaders_elo.cgi"
+        if circuit != "ATP (Uomini)": elo_url += "?f=WTA"
+        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({elo_url})")
+        elo1 = st.number_input(f"Elo {p1_name}", value=1500, step=10)
 
     with col_p2:
         default_idx_p2 = player_list.index(target_p2) if target_p2 in player_list else 0
@@ -465,9 +436,9 @@ def main():
         p2_hand = st.selectbox("Mano P2", ["Destra", "Sinistra"])
         p2_bh = st.selectbox("Rovescio P2", ["Due Mani", "Una Mano"])
         
-        # ELO P2
-        auto_elo2 = elo_engine.get_current_elo(p2_name)
-        elo2 = st.number_input(f"Elo {p2_name}", value=int(auto_elo2), step=10, help="Inserisci Elo TennisAbstract")
+        # Link TennisAbstract Dinamico
+        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({elo_url})")
+        elo2 = st.number_input(f"Elo {p2_name}", value=1500, step=10)
 
     st.sidebar.markdown("---")
     
@@ -570,7 +541,7 @@ def main():
         with st.spinner("Calcolo Fisica, Momentum & Log5 Matchup..."):
             conds = {'altitude':altitude, 'indoor':indoor, 'windy':windy}
             
-            # --- OLISTIC ELO IMPACT ---
+            # --- OLISTIC ELO IMPACT (MANUAL) ---
             diff_elo = elo1 - elo2
             tech_boost = diff_elo / 4000.0 
             mental_impact = 1.0 + (abs(diff_elo) / 2000.0)
@@ -676,3 +647,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 
