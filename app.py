@@ -7,7 +7,7 @@ from datetime import datetime
 
 # --- 1. CONFIGURAZIONE GLOBALE ---
 st.set_page_config(
-    page_title="Tennis Quant Pro - Market Master",
+    page_title="Tennis Quant Pro - Elo Master",
     page_icon="🎾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -125,7 +125,44 @@ class TennisMarkov:
         if best_of == 3: return p**2 + 2*(p**2)*(1-p), p_set
         else: return p**3 + 3*(p**3)*(1-p) + 6*(p**3)*((1-p)**2), p_set
 
-# --- 4. ML ENGINE ---
+# --- 4. NEW ELO ENGINE (CALCOLO INTERNO) ---
+class TennisElo:
+    def __init__(self):
+        self.ratings = {}
+        self.k_factor = 32
+
+    def calculate_elo_from_history(self, df):
+        """Calcola Elo iterando su tutto lo storico df."""
+        if df is None or df.empty: return
+        
+        # Ordina per data per simulare la progressione temporale
+        df_sorted = df.sort_values('tourney_date', ascending=True)
+        
+        self.ratings = {} # Reset
+        
+        for _, row in df_sorted.iterrows():
+            w = row['winner_name']
+            l = row['loser_name']
+            
+            # Init base Elo 1500
+            if w not in self.ratings: self.ratings[w] = 1500
+            if l not in self.ratings: self.ratings[l] = 1500
+            
+            r_w = self.ratings[w]
+            r_l = self.ratings[l]
+            
+            # Probabilità attesa vittoria
+            e_w = 1 / (1 + 10 ** ((r_l - r_w) / 400))
+            e_l = 1 / (1 + 10 ** ((r_w - r_l) / 400))
+            
+            # Aggiornamento (Winner=1, Loser=0)
+            self.ratings[w] = r_w + self.k_factor * (1 - e_w)
+            self.ratings[l] = r_l + self.k_factor * (0 - e_l)
+
+    def get_current_elo(self, player_name):
+        return self.ratings.get(player_name, 1500) # Default 1500 se nuovo
+
+# --- 5. ML ENGINE ---
 class TennisMLPredictor:
     def __init__(self):
         self.data = None
@@ -188,9 +225,9 @@ class TennisMLPredictor:
         if tot_svpt == 0: return None
         tot_opp_1st_in = hist['opp_1st_in'].sum()
         tot_opp_1st_won = hist['opp_1st_won'].sum()
+        ret_1st = 1.0 - (tot_opp_1st_won / tot_opp_1st_in) if tot_opp_1st_in > 0 else 0.30
         tot_opp_2nd_in = hist['opp_2nd_in'].sum()
         tot_opp_2nd_won = hist['opp_2nd_won'].sum()
-        ret_1st = 1.0 - (tot_opp_1st_won / tot_opp_1st_in) if tot_opp_1st_in > 0 else 0.30
         ret_2nd = 1.0 - (tot_opp_2nd_won / tot_opp_2nd_in) if tot_opp_2nd_in > 0 else 0.50
         return {
             '1st_in': hist['1in'].sum() / tot_svpt,
@@ -201,7 +238,7 @@ class TennisMLPredictor:
             'ret_1st_win': ret_1st, 'ret_2nd_win': ret_2nd
         }
 
-# --- 5. MONTE CARLO ENGINE ---
+# --- 6. MONTE CARLO ENGINE ---
 class TennisMonteCarloEngine:
     def __init__(self, p1_stats, p2_stats, config, current_state=None):
         self.orig_p1 = p1_stats
@@ -371,7 +408,7 @@ class TennisMonteCarloEngine:
             'avg_breaks_p1': df['p1_breaks'].mean(), 'avg_breaks_p2': df['p2_breaks'].mean()
         }, df
 
-# --- 6. MAIN INTERFACE ---
+# --- 7. MAIN INTERFACE ---
 def main():
     st.sidebar.title("🛠️ Setup Match")
     
@@ -381,6 +418,8 @@ def main():
     if circuit == "ATP (Uomini)" and st.sidebar.checkbox("Slam Mode (Best of 5)"): sets_to_win = 3
 
     ml = TennisMLPredictor()
+    elo_engine = TennisElo()
+    
     if 'curr_repo' not in st.session_state: st.session_state.curr_repo = repo_name
     if st.session_state.curr_repo != repo_name:
         st.session_state.curr_repo = repo_name
@@ -389,12 +428,15 @@ def main():
     with st.sidebar:
         with st.spinner(f"Caricamento {circuit}..."):
             raw_df = ml.load_and_prep_data(repo_name)
-            if raw_df is not None: st.success("✅ DB Connesso")
+            if raw_df is not None: 
+                st.success("✅ DB Connesso")
+                # Calcola Elo
+                with st.spinner("Calcolo Elo Ratings..."):
+                    elo_engine.calculate_elo_from_history(raw_df)
             else: st.warning("⚠️ Offline Mode")
 
     col_p1, col_p2 = st.sidebar.columns(2)
     
-    # SETUP LISTA GIOCATORI & DEFAULTS
     if circuit == "ATP (Uomini)":
         target_p1, target_p2 = "Jannik Sinner", "Carlos Alcaraz"
     else:
@@ -408,15 +450,23 @@ def main():
 
     with col_p1:
         default_idx_p1 = player_list.index(target_p1) if target_p1 in player_list else 0
-        # Aggiunto key univoca per circuito per evitare crash
         p1_name = st.selectbox("Giocatore 1", player_list, index=default_idx_p1, key=f"p1_sel_{repo_name}")
         p1_hand = st.selectbox("Mano P1", ["Destra", "Sinistra"])
         p1_bh = st.selectbox("Rovescio P1", ["Due Mani", "Una Mano"])
+        
+        # Mostra Elo
+        elo1 = elo_engine.get_current_elo(p1_name)
+        st.caption(f"Elo Rating: {int(elo1)}")
+
     with col_p2:
         default_idx_p2 = player_list.index(target_p2) if target_p2 in player_list else 0
         p2_name = st.selectbox("Giocatore 2", player_list, index=default_idx_p2, key=f"p2_sel_{repo_name}")
         p2_hand = st.selectbox("Mano P2", ["Destra", "Sinistra"])
         p2_bh = st.selectbox("Rovescio P2", ["Due Mani", "Una Mano"])
+        
+        # Mostra Elo
+        elo2 = elo_engine.get_current_elo(p2_name)
+        st.caption(f"Elo Rating: {int(elo2)}")
 
     st.sidebar.markdown("---")
     surface = st.sidebar.selectbox("Superficie", ["Hard", "Clay", "Grass"])
@@ -433,7 +483,7 @@ def main():
     altitude = ce1.checkbox("Altitudine"); indoor = ce1.checkbox("Indoor"); windy = ce2.checkbox("Vento")
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📊 Statistiche")
+    st.sidebar.subheader("📊 Statistiche (0-100%)")
     p1_data = ml.get_player_prediction(raw_df, p1_name, surface)
     p2_data = ml.get_player_prediction(raw_df, p2_name, surface)
     def val(d, k, fb): return float(d[k]) if d else fb
@@ -442,29 +492,36 @@ def main():
     else: st.sidebar.warning(f"❌ Dati non trovati per {p1_name}")
 
     with st.sidebar.expander(f"Stats {p1_name}", expanded=True):
-        p1_1in = st.number_input(f"1st In %", 0.3, 0.9, val(p1_data,'1st_in',0.62), key=f'p1i_{p1_name}')
-        p1_1w = st.number_input(f"1st Win %", 0.4, 0.95, val(p1_data,'1st_win',0.74), key=f'p1w_{p1_name}')
-        p1_2w = st.number_input(f"2nd Win %", 0.2, 0.8, val(p1_data,'2nd_win',0.53), key=f'p1w2_{p1_name}')
-        p1_ace = st.number_input(f"Ace %", 0.0, 0.4, val(p1_data,'ace_pct',0.08), key=f'p1a_{p1_name}')
-        p1_df = st.number_input(f"DF %", 0.0, 0.3, val(p1_data,'df_pct',0.03), key=f'p1d_{p1_name}')
+        p1_1in = st.number_input(f"1st In %", 0.0, 100.0, val(p1_data,'1st_in',0.62)*100, format="%.1f", key=f'p1i_{p1_name}') / 100
+        p1_1w = st.number_input(f"1st Win %", 0.0, 100.0, val(p1_data,'1st_win',0.74)*100, format="%.1f", key=f'p1w_{p1_name}') / 100
+        p1_2w = st.number_input(f"2nd Win %", 0.0, 100.0, val(p1_data,'2nd_win',0.53)*100, format="%.1f", key=f'p1w2_{p1_name}') / 100
+        p1_ace = st.number_input(f"Ace %", 0.0, 50.0, val(p1_data,'ace_pct',0.08)*100, format="%.1f", key=f'p1a_{p1_name}') / 100
+        p1_df = st.number_input(f"DF %", 0.0, 50.0, val(p1_data,'df_pct',0.03)*100, format="%.1f", key=f'p1d_{p1_name}') / 100
         st.markdown("**Risposta**")
-        p1_r1 = st.number_input("Win vs 1st", 0.1, 0.6, val(p1_data, 'ret_1st_win', 1-avg_1st), key=f'p1r1_{p1_name}')
-        p1_r2 = st.number_input("Win vs 2nd", 0.2, 0.8, val(p1_data, 'ret_2nd_win', 1-avg_2nd), key=f'p1r2_{p1_name}')
+        p1_r1 = st.number_input("Win vs 1st %", 0.0, 100.0, val(p1_data, 'ret_1st_win', 1-avg_1st)*100, format="%.1f", key=f'p1r1_{p1_name}') / 100
+        p1_r2 = st.number_input("Win vs 2nd %", 0.0, 100.0, val(p1_data, 'ret_2nd_win', 1-avg_2nd)*100, format="%.1f", key=f'p1r2_{p1_name}') / 100
 
     if p2_data: st.sidebar.success(f"✅ Dati per {p2_name}")
     else: st.sidebar.warning(f"❌ Dati non trovati per {p2_name}")
 
     with st.sidebar.expander(f"Stats {p2_name}", expanded=True):
-        p2_1in = st.number_input(f"1st In %", 0.3, 0.9, val(p2_data,'1st_in',0.64), key=f'p2i_{p2_name}')
-        p2_1w = st.number_input(f"1st Win %", 0.4, 0.95, val(p2_data,'1st_win',0.73), key=f'p2w_{p2_name}')
-        p2_2w = st.number_input(f"2nd Win %", 0.2, 0.8, val(p2_data,'2nd_win',0.52), key=f'p2w2_{p2_name}')
-        p2_ace = st.number_input(f"Ace %", 0.0, 0.4, val(p2_data,'ace_pct',0.07), key=f'p2a_{p2_name}')
-        p2_df = st.number_input(f"DF %", 0.0, 0.3, val(p2_data,'df_pct',0.04), key=f'p2d_{p2_name}')
+        p2_1in = st.number_input(f"1st In %", 0.0, 100.0, val(p2_data,'1st_in',0.64)*100, format="%.1f", key=f'p2i_{p2_name}') / 100
+        p2_1w = st.number_input(f"1st Win %", 0.0, 100.0, val(p2_data,'1st_win',0.73)*100, format="%.1f", key=f'p2w_{p2_name}') / 100
+        p2_2w = st.number_input(f"2nd Win %", 0.0, 100.0, val(p2_data,'2nd_win',0.52)*100, format="%.1f", key=f'p2w2_{p2_name}') / 100
+        p2_ace = st.number_input(f"Ace %", 0.0, 50.0, val(p2_data,'ace_pct',0.07)*100, format="%.1f", key=f'p2a_{p2_name}') / 100
+        p2_df = st.number_input(f"DF %", 0.0, 50.0, val(p2_data,'df_pct',0.04)*100, format="%.1f", key=f'p2d_{p2_name}') / 100
         st.markdown("**Risposta**")
-        p2_r1 = st.number_input("Win vs 1st", 0.1, 0.6, val(p2_data, 'ret_1st_win', 1-avg_1st), key=f'p2r1_{p2_name}')
-        p2_r2 = st.number_input("Win vs 2nd", 0.2, 0.8, val(p2_data, 'ret_2nd_win', 1-avg_2nd), key=f'p2r2_{p2_name}')
+        p2_r1 = st.number_input("Win vs 1st %", 0.0, 100.0, val(p2_data, 'ret_1st_win', 1-avg_1st)*100, format="%.1f", key=f'p2r1_{p2_name}') / 100
+        p2_r2 = st.number_input("Win vs 2nd %", 0.0, 100.0, val(p2_data, 'ret_2nd_win', 1-avg_2nd)*100, format="%.1f", key=f'p2r2_{p2_name}') / 100
 
     st.sidebar.markdown("---")
+    
+    # --- AUTO RANKING BOOST VIA ELO ---
+    elo_diff = elo1 - elo2
+    # Convertiamo la differenza Elo in una % di boost (es. +100 elo = +2.5%)
+    ranking_diff = elo_diff / 40.0
+    st.sidebar.info(f"📊 Auto-Boost Ranking (Elo Diff {int(elo_diff)}): {ranking_diff:+.1f}%")
+
     mot_map = {"Bassa":0.92, "Normale":1.0, "Alta":1.05, "Max":1.10}
     m1 = mot_map[st.sidebar.selectbox(f"Motivazione {p1_name}", list(mot_map.keys()), index=1)]
     m2 = mot_map[st.sidebar.selectbox(f"Motivazione {p2_name}", list(mot_map.keys()), index=1)]
@@ -513,9 +570,14 @@ def main():
         with st.spinner("Calcolo Fisica, Momentum & Log5 Matchup..."):
             conds = {'altitude':altitude, 'indoor':indoor, 'windy':windy}
             
-            p1_1w_c, p1_a_c = TennisMath.adjust_stats_for_cpi(p1_1w, p1_ace, cpi)
+            # Application Ranking Boost (FROM ELO)
+            rank_boost = ranking_diff / 100.0
+            p1_1w_used = p1_1w + rank_boost
+            p1_2w_used = p1_2w + rank_boost
+            
+            p1_1w_c, p1_a_c = TennisMath.adjust_stats_for_cpi(p1_1w_used, p1_ace, cpi)
             p1_1w_c, p1_a_c = TennisMath.apply_tactical_adjustments(p1_1w_c, p1_a_c, p1_hand, p2_bh, conds)
-            p1_2w_c, _ = TennisMath.adjust_stats_for_cpi(p1_2w, 0, cpi)
+            p1_2w_c, _ = TennisMath.adjust_stats_for_cpi(p1_2w_used, 0, cpi)
             p1_2w_c, _ = TennisMath.apply_tactical_adjustments(p1_2w_c, 0, p1_hand, p2_bh, conds)
             
             p2_1w_c, p2_a_c = TennisMath.adjust_stats_for_cpi(p2_1w, p2_ace, cpi)
@@ -525,8 +587,8 @@ def main():
             
             p1_1w_f = TennisMath.log5_matchup(p1_1w_c, p2_r1 * m2, avg_1st)
             p1_2w_f = TennisMath.log5_matchup(p1_2w_c, p2_r2 * m2, avg_2nd)
-            p2_1w_f = TennisMath.log5_matchup(p2_1w_c, p1_r1 * m1, avg_1st)
-            p2_2w_f = TennisMath.log5_matchup(p2_2w_c, p1_r2 * m1, avg_2nd)
+            p2_1w_f = TennisMath.log5_matchup(p2_1w_c, (p1_r1 + rank_boost) * m1, avg_1st)
+            p2_2w_f = TennisMath.log5_matchup(p2_2w_c, (p1_r2 + rank_boost) * m1, avg_2nd)
             
             s1 = {'1st_in':p1_1in, '1st_win':p1_1w_f, '2nd_win':p1_2w_f, 'ace_pct':p1_a_c, 'df_pct':p1_df, 'mental':men1*m1, 'fatigue_factor':0.98}
             s2 = {'1st_in':p2_1in, '1st_win':p2_1w_f, '2nd_win':p2_2w_f, 'ace_pct':p2_a_c, 'df_pct':p2_df, 'mental':men2*m2, 'fatigue_factor':0.98}
