@@ -427,7 +427,7 @@ def main():
         # Link TennisAbstract Dinamico
         elo_url = "https://www.tennisabstract.com/cgi-bin/leaders_elo.cgi"
         if circuit != "ATP (Uomini)": elo_url += "?f=WTA"
-        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({elo_url})")
+        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({https://tennisabstract.com/reports/atp_elo_ratings.html })")
         elo1 = st.number_input(f"Elo {p1_name}", value=1500, step=10)
 
     with col_p2:
@@ -437,7 +437,7 @@ def main():
         p2_bh = st.selectbox("Rovescio P2", ["Due Mani", "Una Mano"])
         
         # Link TennisAbstract Dinamico
-        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({elo_url})")
+        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({https://tennisabstract.com/reports/wta_elo_ratings.html })")
         elo2 = st.number_input(f"Elo {p2_name}", value=1500, step=10)
 
     st.sidebar.markdown("---")
