@@ -4,17 +4,90 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import math
+import io
 from datetime import datetime
 
 # --- 1. CONFIGURAZIONE GLOBALE ---
 st.set_page_config(
-    page_title="Tennis Quant Pro - Physics Enhanced",
+    page_title="Tennis Quant Pro - Tournament Data Edition",
     page_icon="🎾",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 plt.style.use('dark_background')
 sns.set_style("darkgrid")
+
+# --- DATABASE TORNEI (Dai tuoi dati CSV) ---
+CSV_DATA = """Date,Tournament,Surface,Ace%,Surface Speed
+2026-02-02,Montpellier,Hard,18.1%,1.47
+2025-09-17,Hangzhou,Hard,13.2%,1.43
+2025-11-02,Athens,Hard,14.6%,1.41
+2025-06-09,Stuttgart,Grass,15.8%,1.40
+2025-10-20,Basel,Hard,14.8%,1.38
+2025-11-09,Tour Finals,Hard,12.0%,1.35
+2025-11-02,Metz,Hard,13.1%,1.35
+2025-10-13,Brussels,Hard,13.8%,1.33
+2025-06-16,Queen's Club,Grass,14.9%,1.33
+2025-06-16,Halle,Grass,13.3%,1.27
+2025-10-20,Vienna,Hard,12.1%,1.23
+2026-01-04,Brisbane,Hard,14.9%,1.22
+2025-10-13,Almaty,Hard,10.2%,1.22
+2025-08-07,Cincinnati Masters,Hard,12.3%,1.19
+2025-03-19,Miami Masters,Hard,12.5%,1.18
+2025-09-17,Chengdu,Hard,13.0%,1.18
+2025-07-21,Washington,Hard,12.5%,1.17
+2025-09-24,Tokyo,Hard,11.6%,1.17
+2026-01-12,Adelaide,Hard,11.6%,1.15
+2026-01-02,United Cup,Hard,14.7%,1.14
+2026-01-19,Australian Open,Hard,11.7%,1.13
+2025-06-30,Wimbledon,Grass,11.6%,1.10
+2025-02-10,Delray Beach,Hard,11.5%,1.10
+2025-02-10,Marseille,Hard,12.0%,1.09
+2025-08-17,Winston-Salem,Hard,11.4%,1.08
+2025-10-01,Shanghai Masters,Hard,11.2%,1.08
+2025-02-17,Doha,Hard,12.4%,1.07
+2025-07-14,Los Cabos,Hard,11.5%,1.06
+2025-09-25,Beijing,Hard,9.5%,1.06
+2025-06-22,Mallorca,Grass,10.2%,1.06
+2026-01-12,Auckland,Hard,11.9%,1.05
+2025-07-14,Gstaad,Clay,12.4%,1.02
+2026-01-05,Hong Kong,Hard,10.8%,1.02
+2025-07-27,Canada Masters,Hard,11.2%,1.01
+2025-02-24,Dubai,Hard,10.7%,1.00
+2025-08-25,Us Open,Hard,10.6%,0.97
+2025-10-27,Paris Masters,Hard,10.5%,0.97
+2025-06-09,s Hertogenbosch,Grass,13.2%,0.97
+2025-10-13,Stockholm,Hard,9.1%,0.93
+2025-02-17,Rio de Janeiro,Clay,5.9%,0.91
+2025-02-10,Buenos Aires,Clay,5.9%,0.89
+2025-07-14,Bastad,Clay,6.9%,0.84
+2025-12-17,Next Gen Finals,Hard,10.2%,0.84
+2025-07-21,Kitzbuhel,Clay,10.0%,0.81
+2025-02-24,Acapulco,Hard,8.1%,0.81
+2025-04-23,Madrid Masters,Clay,8.5%,0.79
+2025-03-31,Marrakech,Clay,7.6%,0.79
+2025-06-23,Eastbourne,Grass,8.3%,0.77
+2025-03-31,Houston,Clay,7.1%,0.75
+2025-03-05,Indian Wells Masters,Hard,7.1%,0.73
+2025-07-20,Umag,Clay,7.4%,0.73
+2025-05-18,Geneva,Clay,8.7%,0.71
+2025-02-24,Santiago,Clay,5.8%,0.70
+2025-05-26,Roland Garros,Clay,7.3%,0.68
+2025-04-14,Munich,Clay,7.2%,0.65
+2025-05-07,Rome Masters,Clay,6.1%,0.60
+2025-05-18,Hamburg,Clay,6.6%,0.57
+2025-04-07,Monte Carlo Masters,Clay,5.4%,0.56
+2025-04-14,Barcelona,Clay,4.7%,0.56
+2025-09-19,Laver Cup,Hard,5.8%,0.54
+2025-03-31,Bucharest,Clay,3.1%,0.42"""
+
+@st.cache_data
+def load_tournament_db():
+    df = pd.read_csv(io.StringIO(CSV_DATA))
+    # Pulizia dati: Rimuovi % e converti in float
+    df['Ace%_Val'] = df['Ace%'].str.replace('%', '').astype(float) / 100.0
+    df['Surface Speed'] = df['Surface Speed'].astype(float)
+    return df
 
 # --- 2. CLASSE MATH & UTILS ---
 class TennisMath:
@@ -27,19 +100,36 @@ class TennisMath:
         return max(0.0, f * fractional)
 
     @staticmethod
-    def adjust_stats_for_cpi(serve_pct, ace_pct, cpi):
-        # --- MODIFICA RICHIESTA: CALCOLO NON LINEARE ---
-        # Invece di una proporzione diretta, usiamo una potenza (1.2)
-        # per accentuare l'effetto quando il CPI si allontana dalla media (35).
-        # Questo riflette meglio la fisica: campi molto veloci aumentano gli ace più che proporzionalmente.
+    def adjust_stats_for_tournament(serve_pct, ace_pct, speed_coeff, tour_ace_avg, global_ace_avg):
+        """
+        Nuova funzione che utilizza i dati specifici del torneo forniti dall'utente.
+        1. Ace: Ricalibrati in base alla % Ace specifica del campo.
+        2. Servizio: Ricalibrato in base al coefficiente di velocità (Speed).
+        """
         
-        diff = (cpi - 35) / 100.0
-        # math.copysign mantiene il segno (+ o -) applicando l'esponente al valore assoluto
-        factor = math.copysign(abs(diff) ** 1.2, diff) 
+        # A. CALCOLO ACE - Basato sulla "Ace% specifica del campo"
+        # Se il torneo ha una media Ace del 18% e la media globale Hard è 10%, 
+        # il giocatore farà (18/10) = 1.8 volte i suoi ace soliti.
+        if global_ace_avg > 0:
+            ace_factor = tour_ace_avg / global_ace_avg
+        else:
+            ace_factor = 1.0
         
-        # Fattori di impatto rimasti invariati
-        adj_serve = serve_pct + (factor * 0.8)
-        adj_ace = ace_pct * (1 + factor * 1.5)
+        # Limitiamo il fattore per evitare esplosioni (max 2.5x, min 0.5x)
+        ace_factor = min(2.5, max(0.5, ace_factor))
+        adj_ace = ace_pct * ace_factor
+
+        # B. CALCOLO SERVIZIO - Basato sul "Coefficiente di Velocità"
+        # Usiamo la logica non-lineare (esponenziale 1.2) richiesta.
+        # Speed 1.00 è neutro. >1.00 aiuta il servizio.
+        
+        diff = speed_coeff - 1.0
+        # Applichiamo l'esponente 1.2 per mantenere la non-linearità fisica
+        speed_impact = math.copysign(abs(diff) ** 1.2, diff)
+        
+        # L'impatto modifica la % di punti vinti al servizio
+        # Un campo molto veloce (es 1.47) -> diff 0.47 -> impact ~0.4 -> +4% punti vinti
+        adj_serve = serve_pct + (speed_impact * 0.10) 
         
         return min(0.98, max(0.30, adj_serve)), max(0.0, adj_ace)
 
@@ -386,6 +476,9 @@ class TennisMonteCarloEngine:
 def main():
     st.sidebar.title("🛠️ Setup Match")
     
+    # --- CARICAMENTO DATI TORNEI ---
+    df_tour = load_tournament_db()
+    
     circuit = st.sidebar.radio("Circuito", ["ATP (Uomini)", "WTA (Donne)"])
     repo_name = "tennis_atp" if circuit == "ATP (Uomini)" else "tennis_wta"
     sets_to_win = 2
@@ -428,16 +521,41 @@ def main():
         p2_bh = st.selectbox("Rovescio P2", ["Due Mani", "Una Mano"])
 
     st.sidebar.markdown("---")
-    surface = st.sidebar.selectbox("Superficie", ["Hard", "Clay", "Grass"])
+    
+    # --- SELEZIONE TORNEO E DATI CAMPO AUTOMATICI ---
+    st.sidebar.header("🏟️ Condizioni Campo")
+    
+    # Dropdown con lista tornei
+    tour_names = sorted(df_tour['Tournament'].unique())
+    selected_tour = st.sidebar.selectbox("Seleziona Torneo", tour_names, index=tour_names.index("Montpellier") if "Montpellier" in tour_names else 0)
+    
+    # Recupero dati specifici del torneo
+    tour_data = df_tour[df_tour['Tournament'] == selected_tour].iloc[0]
+    surface = tour_data['Surface']
+    speed_coeff = tour_data['Surface Speed']
+    tour_ace_avg = tour_data['Ace%_Val']
+    
+    # Mostra i dati caricati
+    col_info1, col_info2 = st.sidebar.columns(2)
+    col_info1.info(f"Superficie: **{surface}**")
+    col_info2.info(f"Speed: **{speed_coeff:.2f}**")
+    st.sidebar.caption(f"Ace Avg del Campo: {tour_ace_avg:.1%}")
+    
+    # --- FINE MODIFICHE INPUT ---
     
     avg_1st, avg_2nd, avg_tot = None, None, None
     if raw_df is not None: avg_1st, avg_2nd, avg_tot = ml.calculate_tour_baselines(raw_df, surface)
+    
+    # Calcolo medie globali Ace per superficie (approssimazione per il rapporto)
+    global_ace_avgs = {'Hard': 0.08, 'Clay': 0.05, 'Grass': 0.10}
+    surface_ace_avg = global_ace_avgs.get(surface, 0.08)
+
     if avg_1st is None: 
         avg_1st = 0.73 if circuit == "ATP (Uomini)" else 0.63
         avg_2nd = 0.52 if circuit == "ATP (Uomini)" else 0.46
     
-    st.sidebar.caption(f"Medie Tour ({surface}): 1st {avg_1st:.0%} | 2nd {avg_2nd:.0%}")
-    cpi = st.sidebar.slider("CPI (Velocità)", 20, 50, 35)
+    st.sidebar.caption(f"Medie Globali ({surface}): 1st Win {avg_1st:.0%} | Ace Avg {surface_ace_avg:.1%}")
+    
     ce1, ce2 = st.sidebar.columns(2)
     altitude = ce1.checkbox("Altitudine"); indoor = ce1.checkbox("Indoor"); windy = ce2.checkbox("Vento")
 
@@ -516,20 +634,22 @@ def main():
             else: st.sidebar.error(f"🧠 Crollo: {delta_m:.1%}")
 
     st.title(f"🎾 Tennis Quant Pro | {circuit}")
-    st.markdown(f"**{p1_name}** vs **{p2_name}** | {surface} | Best of {sets_to_win*2-1}")
+    st.markdown(f"**{p1_name}** vs **{p2_name}** | {selected_tour} ({surface}) | Best of {sets_to_win*2-1}")
     
     if st.button("🚀 LANCIA SIMULAZIONE COMPLETA"):
-        with st.spinner("Calcolo Fisica, Momentum & Log5 Matchup..."):
+        with st.spinner(f"Simulazione in corso a {selected_tour}..."):
             conds = {'altitude':altitude, 'indoor':indoor, 'windy':windy}
             
-            p1_1w_c, p1_a_c = TennisMath.adjust_stats_for_cpi(p1_1w, p1_ace, cpi)
+            # --- APPLICAZIONE DATI TORNEO ---
+            # Passiamo i nuovi parametri speed_coeff e tour_ace_avg
+            p1_1w_c, p1_a_c = TennisMath.adjust_stats_for_tournament(p1_1w, p1_ace, speed_coeff, tour_ace_avg, surface_ace_avg)
             p1_1w_c, p1_a_c = TennisMath.apply_tactical_adjustments(p1_1w_c, p1_a_c, p1_hand, p2_bh, conds)
-            p1_2w_c, _ = TennisMath.adjust_stats_for_cpi(p1_2w, 0, cpi)
+            p1_2w_c, _ = TennisMath.adjust_stats_for_tournament(p1_2w, 0, speed_coeff, tour_ace_avg, surface_ace_avg)
             p1_2w_c, _ = TennisMath.apply_tactical_adjustments(p1_2w_c, 0, p1_hand, p2_bh, conds)
             
-            p2_1w_c, p2_a_c = TennisMath.adjust_stats_for_cpi(p2_1w, p2_ace, cpi)
+            p2_1w_c, p2_a_c = TennisMath.adjust_stats_for_tournament(p2_1w, p2_ace, speed_coeff, tour_ace_avg, surface_ace_avg)
             p2_1w_c, p2_a_c = TennisMath.apply_tactical_adjustments(p2_1w_c, p2_a_c, p2_hand, p1_bh, conds)
-            p2_2w_c, _ = TennisMath.adjust_stats_for_cpi(p2_2w, 0, cpi)
+            p2_2w_c, _ = TennisMath.adjust_stats_for_tournament(p2_2w, 0, speed_coeff, tour_ace_avg, surface_ace_avg)
             p2_2w_c, _ = TennisMath.apply_tactical_adjustments(p2_2w_c, 0, p2_hand, p1_bh, conds)
             
             p1_1w_f = TennisMath.log5_matchup(p1_1w_c, p2_r1 * m2, avg_1st)
@@ -608,7 +728,7 @@ def main():
             with t6:
                 if p1_hand=="Sinistra" and p2_bh=="Una Mano": st.success("Vantaggio Tattico: Mancino vs 1H-BH")
                 if circuit=="ATP (Uomini)" and sets_to_win==3: st.info("Slam Mode: Best of 5 sets")
-                if p1_data: st.success("Dati AI caricati.")
+                st.success(f"Dati Campo: Speed {speed_coeff} | Ace Avg {tour_ace_avg:.1%}")
 
 if __name__ == "__main__":
     main()
