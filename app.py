@@ -3,11 +3,12 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import math
 from datetime import datetime
 
 # --- 1. CONFIGURAZIONE GLOBALE ---
 st.set_page_config(
-    page_title="Tennis Quant Pro - Final Link Edition",
+    page_title="Tennis Quant Pro - Physics Enhanced",
     page_icon="🎾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -27,9 +28,19 @@ class TennisMath:
 
     @staticmethod
     def adjust_stats_for_cpi(serve_pct, ace_pct, cpi):
-        factor = (cpi - 35) / 100 
+        # --- MODIFICA RICHIESTA: CALCOLO NON LINEARE ---
+        # Invece di una proporzione diretta, usiamo una potenza (1.2)
+        # per accentuare l'effetto quando il CPI si allontana dalla media (35).
+        # Questo riflette meglio la fisica: campi molto veloci aumentano gli ace più che proporzionalmente.
+        
+        diff = (cpi - 35) / 100.0
+        # math.copysign mantiene il segno (+ o -) applicando l'esponente al valore assoluto
+        factor = math.copysign(abs(diff) ** 1.2, diff) 
+        
+        # Fattori di impatto rimasti invariati
         adj_serve = serve_pct + (factor * 0.8)
         adj_ace = ace_pct * (1 + factor * 1.5)
+        
         return min(0.98, max(0.30, adj_serve)), max(0.0, adj_ace)
 
     @staticmethod
@@ -373,16 +384,6 @@ class TennisMonteCarloEngine:
 
 # --- 6. MAIN INTERFACE ---
 def main():
-    # --- INIT VARIABLES ---
-    p1_name, p2_name = "Giocatore 1", "Giocatore 2"
-    p1_1w, p2_1w = 0.65, 0.65
-    p1_1in, p2_1in = 0.60, 0.60
-    p1_2w, p2_2w = 0.50, 0.50
-    p1_ace, p2_ace = 0.05, 0.05
-    p1_df, p2_df = 0.03, 0.03
-    p1_r1, p2_r1 = 0.30, 0.30
-    p1_r2, p2_r2 = 0.50, 0.50
-    
     st.sidebar.title("🛠️ Setup Match")
     
     circuit = st.sidebar.radio("Circuito", ["ATP (Uomini)", "WTA (Donne)"])
@@ -390,14 +391,7 @@ def main():
     sets_to_win = 2
     if circuit == "ATP (Uomini)" and st.sidebar.checkbox("Slam Mode (Best of 5)"): sets_to_win = 3
 
-    # URL Dinamico per Elo
-    if circuit == "ATP (Uomini)":
-        elo_url = "https://tennisabstract.com/reports/atp_elo_ratings.html"
-    else:
-        elo_url = "https://tennisabstract.com/reports/wta_elo_ratings.html"
-
     ml = TennisMLPredictor()
-    
     if 'curr_repo' not in st.session_state: st.session_state.curr_repo = repo_name
     if st.session_state.curr_repo != repo_name:
         st.session_state.curr_repo = repo_name
@@ -411,7 +405,6 @@ def main():
 
     col_p1, col_p2 = st.sidebar.columns(2)
     
-    # SETUP LISTA GIOCATORI
     if circuit == "ATP (Uomini)":
         target_p1, target_p2 = "Jannik Sinner", "Carlos Alcaraz"
     else:
@@ -419,36 +412,22 @@ def main():
 
     player_list = [target_p1, target_p2]
     if raw_df is not None:
-        try:
-            all_p = pd.concat([raw_df['winner_name'], raw_df['loser_name']]).unique()
-            all_p.sort()
-            player_list = list(all_p)
-        except: pass
+        all_p = pd.concat([raw_df['winner_name'], raw_df['loser_name']]).unique()
+        all_p.sort()
+        player_list = list(all_p)
 
     with col_p1:
         default_idx_p1 = player_list.index(target_p1) if target_p1 in player_list else 0
         p1_name = st.selectbox("Giocatore 1", player_list, index=default_idx_p1, key=f"p1_sel_{repo_name}")
         p1_hand = st.selectbox("Mano P1", ["Destra", "Sinistra"])
         p1_bh = st.selectbox("Rovescio P1", ["Due Mani", "Una Mano"])
-        
-        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({elo_url})")
-        elo1 = st.number_input(f"Elo {p1_name}", value=1500, step=10)
-
     with col_p2:
         default_idx_p2 = player_list.index(target_p2) if target_p2 in player_list else 0
         p2_name = st.selectbox("Giocatore 2", player_list, index=default_idx_p2, key=f"p2_sel_{repo_name}")
         p2_hand = st.selectbox("Mano P2", ["Destra", "Sinistra"])
         p2_bh = st.selectbox("Rovescio P2", ["Due Mani", "Una Mano"])
-        
-        st.markdown(f"🔗 [Trova Elo su TennisAbstract]({elo_url})")
-        elo2 = st.number_input(f"Elo {p2_name}", value=1500, step=10)
 
     st.sidebar.markdown("---")
-    
-    # --- INFO DELTA ELO ---
-    elo_diff = elo1 - elo2
-    st.sidebar.info(f"📊 Delta Elo: {int(elo_diff)}")
-
     surface = st.sidebar.selectbox("Superficie", ["Hard", "Clay", "Grass"])
     
     avg_1st, avg_2nd, avg_tot = None, None, None
@@ -495,7 +474,6 @@ def main():
         p2_r2 = st.number_input("Win vs 2nd %", 0.0, 100.0, val(p2_data, 'ret_2nd_win', 1-avg_2nd)*100, format="%.1f", key=f'p2r2_{p2_name}') / 100
 
     st.sidebar.markdown("---")
-    
     mot_map = {"Bassa":0.92, "Normale":1.0, "Alta":1.05, "Max":1.10}
     m1 = mot_map[st.sidebar.selectbox(f"Motivazione {p1_name}", list(mot_map.keys()), index=1)]
     m2 = mot_map[st.sidebar.selectbox(f"Motivazione {p2_name}", list(mot_map.keys()), index=1)]
@@ -544,39 +522,23 @@ def main():
         with st.spinner("Calcolo Fisica, Momentum & Log5 Matchup..."):
             conds = {'altitude':altitude, 'indoor':indoor, 'windy':windy}
             
-            # --- OLISTIC ELO IMPACT (MANUAL) ---
-            diff_elo = elo1 - elo2
-            tech_boost = diff_elo / 4000.0 
-            mental_impact = 1.0 + (abs(diff_elo) / 2000.0)
-            fatigue_impact = 0.005 if abs(diff_elo) > 200 else 0.0
-            
-            # Applicazione
-            p1_1w_used = p1_1w + tech_boost
-            p1_2w_used = p1_2w + tech_boost
-            
-            p1_1w_c, p1_a_c = TennisMath.adjust_stats_for_cpi(p1_1w_used, p1_ace, cpi)
+            p1_1w_c, p1_a_c = TennisMath.adjust_stats_for_cpi(p1_1w, p1_ace, cpi)
             p1_1w_c, p1_a_c = TennisMath.apply_tactical_adjustments(p1_1w_c, p1_a_c, p1_hand, p2_bh, conds)
-            p1_2w_c, _ = TennisMath.adjust_stats_for_cpi(p1_2w_used, 0, cpi)
+            p1_2w_c, _ = TennisMath.adjust_stats_for_cpi(p1_2w, 0, cpi)
             p1_2w_c, _ = TennisMath.apply_tactical_adjustments(p1_2w_c, 0, p1_hand, p2_bh, conds)
             
-            p2_1w_c, p2_a_c = TennisMath.adjust_stats_for_cpi(p2_1w - tech_boost, p2_ace, cpi)
+            p2_1w_c, p2_a_c = TennisMath.adjust_stats_for_cpi(p2_1w, p2_ace, cpi)
             p2_1w_c, p2_a_c = TennisMath.apply_tactical_adjustments(p2_1w_c, p2_a_c, p2_hand, p1_bh, conds)
-            p2_2w_c, _ = TennisMath.adjust_stats_for_cpi(p2_2w - tech_boost, 0, cpi)
+            p2_2w_c, _ = TennisMath.adjust_stats_for_cpi(p2_2w, 0, cpi)
             p2_2w_c, _ = TennisMath.apply_tactical_adjustments(p2_2w_c, 0, p2_hand, p1_bh, conds)
             
             p1_1w_f = TennisMath.log5_matchup(p1_1w_c, p2_r1 * m2, avg_1st)
             p1_2w_f = TennisMath.log5_matchup(p1_2w_c, p2_r2 * m2, avg_2nd)
-            p2_1w_f = TennisMath.log5_matchup(p2_1w_c, (p1_r1 + tech_boost) * m1, avg_1st)
-            p2_2w_f = TennisMath.log5_matchup(p2_2w_c, (p1_r2 + tech_boost) * m1, avg_2nd)
+            p2_1w_f = TennisMath.log5_matchup(p2_1w_c, p1_r1 * m1, avg_1st)
+            p2_2w_f = TennisMath.log5_matchup(p2_2w_c, p1_r2 * m1, avg_2nd)
             
-            men1_final = men1 * m1 * (mental_impact if diff_elo > 0 else 1.0)
-            men2_final = men2 * m2 * (mental_impact if diff_elo < 0 else 1.0)
-            
-            fatigue1 = 0.98 + (fatigue_impact if diff_elo > 200 else 0)
-            fatigue2 = 0.98 + (fatigue_impact if diff_elo < -200 else 0)
-
-            s1 = {'1st_in':p1_1in, '1st_win':p1_1w_f, '2nd_win':p1_2w_f, 'ace_pct':p1_a_c, 'df_pct':p1_df, 'mental':men1_final, 'fatigue_factor':fatigue1}
-            s2 = {'1st_in':p2_1in, '1st_win':p2_1w_f, '2nd_win':p2_2w_f, 'ace_pct':p2_a_c, 'df_pct':p2_df, 'mental':men2_final, 'fatigue_factor':fatigue2}
+            s1 = {'1st_in':p1_1in, '1st_win':p1_1w_f, '2nd_win':p1_2w_f, 'ace_pct':p1_a_c, 'df_pct':p1_df, 'mental':men1*m1, 'fatigue_factor':0.98}
+            s2 = {'1st_in':p2_1in, '1st_win':p2_1w_f, '2nd_win':p2_2w_f, 'ace_pct':p2_a_c, 'df_pct':p2_df, 'mental':men2*m2, 'fatigue_factor':0.98}
             
             markov_match_p, markov_set_p = TennisMarkov.get_full_theoretical_prob(s1, s2, sets_to_win*2-1)
             eng = TennisMonteCarloEngine(s1, s2, {'simulations':3000, 'sets_to_win':sets_to_win}, live_st)
@@ -650,3 +612,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 
