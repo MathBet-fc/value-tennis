@@ -5,11 +5,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import math
 import io
+import requests
 from datetime import datetime
 
 # --- 1. CONFIGURAZIONE GLOBALE ---
 st.set_page_config(
-    page_title="Tennis Quant Pro - Tournament Data Edition",
+    page_title="Tennis Quant Pro - Full Control",
     page_icon="🎾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -101,34 +102,17 @@ class TennisMath:
 
     @staticmethod
     def adjust_stats_for_tournament(serve_pct, ace_pct, speed_coeff, tour_ace_avg, global_ace_avg):
-        """
-        Nuova funzione che utilizza i dati specifici del torneo forniti dall'utente.
-        1. Ace: Ricalibrati in base alla % Ace specifica del campo.
-        2. Servizio: Ricalibrato in base al coefficiente di velocità (Speed).
-        """
-        
         # A. CALCOLO ACE - Basato sulla "Ace% specifica del campo"
-        # Se il torneo ha una media Ace del 18% e la media globale Hard è 10%, 
-        # il giocatore farà (18/10) = 1.8 volte i suoi ace soliti.
         if global_ace_avg > 0:
             ace_factor = tour_ace_avg / global_ace_avg
         else:
             ace_factor = 1.0
-        
-        # Limitiamo il fattore per evitare esplosioni (max 2.5x, min 0.5x)
         ace_factor = min(2.5, max(0.5, ace_factor))
         adj_ace = ace_pct * ace_factor
 
-        # B. CALCOLO SERVIZIO - Basato sul "Coefficiente di Velocità"
-        # Usiamo la logica non-lineare (esponenziale 1.2) richiesta.
-        # Speed 1.00 è neutro. >1.00 aiuta il servizio.
-        
+        # B. CALCOLO SERVIZIO - Basato sul "Coefficiente di Velocità" (Esponenziale)
         diff = speed_coeff - 1.0
-        # Applichiamo l'esponente 1.2 per mantenere la non-linearità fisica
         speed_impact = math.copysign(abs(diff) ** 1.2, diff)
-        
-        # L'impatto modifica la % di punti vinti al servizio
-        # Un campo molto veloce (es 1.47) -> diff 0.47 -> impact ~0.4 -> +4% punti vinti
         adj_serve = serve_pct + (speed_impact * 0.10) 
         
         return min(0.98, max(0.30, adj_serve)), max(0.0, adj_ace)
@@ -232,8 +216,19 @@ class TennisMLPredictor:
         self.data = None
 
     @st.cache_data(ttl=3600*12) 
-    def load_and_prep_data(_self, repo_name):
+    def load_and_prep_data(_self, repo_name, custom_url=None):
         try:
+            # -- MODIFICA: GESTIONE LINK CUSTOM --
+            if custom_url and len(custom_url) > 5:
+                # Se l'utente fornisce un link diretto, usa quello
+                try:
+                    df = pd.read_csv(custom_url)
+                    df['tourney_date'] = pd.to_datetime(df['tourney_date'], format='%Y%m%d', errors='coerce')
+                    return df
+                except Exception as e:
+                    return None
+            
+            # Altrimenti usa GitHub standard
             prefix = repo_name.replace('tennis_', '')
             base_url = f"https://raw.githubusercontent.com/JeffSackmann/{repo_name}/master"
             urls = [
@@ -484,15 +479,20 @@ def main():
     sets_to_win = 2
     if circuit == "ATP (Uomini)" and st.sidebar.checkbox("Slam Mode (Best of 5)"): sets_to_win = 3
 
+    # -- REINSERITO: INPUT URL PERSONALIZZATO --
+    custom_url = st.sidebar.text_input("Link CSV Personalizzato (Opzionale)", placeholder="https://...")
+    
     ml = TennisMLPredictor()
-    if 'curr_repo' not in st.session_state: st.session_state.curr_repo = repo_name
-    if st.session_state.curr_repo != repo_name:
-        st.session_state.curr_repo = repo_name
+    # Logica per ricaricare se cambia repo o url
+    cache_key = f"{repo_name}_{custom_url}"
+    if 'curr_repo_key' not in st.session_state: st.session_state.curr_repo_key = cache_key
+    if st.session_state.curr_repo_key != cache_key:
+        st.session_state.curr_repo_key = cache_key
         st.cache_data.clear()
         
     with st.sidebar:
-        with st.spinner(f"Caricamento {circuit}..."):
-            raw_df = ml.load_and_prep_data(repo_name)
+        with st.spinner(f"Caricamento dati..."):
+            raw_df = ml.load_and_prep_data(repo_name, custom_url)
             if raw_df is not None: st.success("✅ DB Connesso")
             else: st.warning("⚠️ Offline Mode")
 
@@ -511,14 +511,22 @@ def main():
 
     with col_p1:
         default_idx_p1 = player_list.index(target_p1) if target_p1 in player_list else 0
-        p1_name = st.selectbox("Giocatore 1", player_list, index=default_idx_p1, key=f"p1_sel_{repo_name}")
+        p1_name = st.selectbox("Giocatore 1", player_list, index=default_idx_p1, key=f"p1_sel")
+        # -- REINSERITO: ELO P1 --
+        p1_elo = st.number_input("ELO/Rank P1", 0, 10000, 1500)
         p1_hand = st.selectbox("Mano P1", ["Destra", "Sinistra"])
         p1_bh = st.selectbox("Rovescio P1", ["Due Mani", "Una Mano"])
     with col_p2:
         default_idx_p2 = player_list.index(target_p2) if target_p2 in player_list else 0
-        p2_name = st.selectbox("Giocatore 2", player_list, index=default_idx_p2, key=f"p2_sel_{repo_name}")
+        p2_name = st.selectbox("Giocatore 2", player_list, index=default_idx_p2, key=f"p2_sel")
+        # -- REINSERITO: ELO P2 --
+        p2_elo = st.number_input("ELO/Rank P2", 0, 10000, 1500)
         p2_hand = st.selectbox("Mano P2", ["Destra", "Sinistra"])
         p2_bh = st.selectbox("Rovescio P2", ["Due Mani", "Una Mano"])
+
+    # Calcolo delta ELO per visualizzazione
+    elo_diff = p1_elo - p2_elo
+    st.sidebar.caption(f"Delta ELO: {elo_diff} (Vantaggio {'P1' if elo_diff>0 else 'P2'})")
 
     st.sidebar.markdown("---")
     
@@ -541,12 +549,10 @@ def main():
     col_info2.info(f"Speed: **{speed_coeff:.2f}**")
     st.sidebar.caption(f"Ace Avg del Campo: {tour_ace_avg:.1%}")
     
-    # --- FINE MODIFICHE INPUT ---
-    
     avg_1st, avg_2nd, avg_tot = None, None, None
     if raw_df is not None: avg_1st, avg_2nd, avg_tot = ml.calculate_tour_baselines(raw_df, surface)
     
-    # Calcolo medie globali Ace per superficie (approssimazione per il rapporto)
+    # Calcolo medie globali Ace per superficie
     global_ace_avgs = {'Hard': 0.08, 'Clay': 0.05, 'Grass': 0.10}
     surface_ace_avg = global_ace_avgs.get(surface, 0.08)
 
@@ -569,32 +575,36 @@ def main():
     else: st.sidebar.warning(f"❌ Dati non trovati per {p1_name}")
 
     with st.sidebar.expander(f"Stats {p1_name}", expanded=True):
-        p1_1in = st.number_input(f"1st In %", 0.0, 100.0, val(p1_data,'1st_in',0.62)*100, format="%.1f", key=f'p1i_{p1_name}') / 100
-        p1_1w = st.number_input(f"1st Win %", 0.0, 100.0, val(p1_data,'1st_win',0.74)*100, format="%.1f", key=f'p1w_{p1_name}') / 100
-        p1_2w = st.number_input(f"2nd Win %", 0.0, 100.0, val(p1_data,'2nd_win',0.53)*100, format="%.1f", key=f'p1w2_{p1_name}') / 100
-        p1_ace = st.number_input(f"Ace %", 0.0, 50.0, val(p1_data,'ace_pct',0.08)*100, format="%.1f", key=f'p1a_{p1_name}') / 100
-        p1_df = st.number_input(f"DF %", 0.0, 50.0, val(p1_data,'df_pct',0.03)*100, format="%.1f", key=f'p1d_{p1_name}') / 100
+        p1_1in = st.number_input(f"1st In %", 0.0, 100.0, val(p1_data,'1st_in',0.62)*100, format="%.1f", key=f'p1i') / 100
+        p1_1w = st.number_input(f"1st Win %", 0.0, 100.0, val(p1_data,'1st_win',0.74)*100, format="%.1f", key=f'p1w') / 100
+        p1_2w = st.number_input(f"2nd Win %", 0.0, 100.0, val(p1_data,'2nd_win',0.53)*100, format="%.1f", key=f'p1w2') / 100
+        p1_ace = st.number_input(f"Ace %", 0.0, 50.0, val(p1_data,'ace_pct',0.08)*100, format="%.1f", key=f'p1a') / 100
+        p1_df = st.number_input(f"DF %", 0.0, 50.0, val(p1_data,'df_pct',0.03)*100, format="%.1f", key=f'p1d') / 100
         st.markdown("**Risposta**")
-        p1_r1 = st.number_input("Win vs 1st %", 0.0, 100.0, val(p1_data, 'ret_1st_win', 1-avg_1st)*100, format="%.1f", key=f'p1r1_{p1_name}') / 100
-        p1_r2 = st.number_input("Win vs 2nd %", 0.0, 100.0, val(p1_data, 'ret_2nd_win', 1-avg_2nd)*100, format="%.1f", key=f'p1r2_{p1_name}') / 100
+        p1_r1 = st.number_input("Win vs 1st %", 0.0, 100.0, val(p1_data, 'ret_1st_win', 1-avg_1st)*100, format="%.1f", key=f'p1r1') / 100
+        p1_r2 = st.number_input("Win vs 2nd %", 0.0, 100.0, val(p1_data, 'ret_2nd_win', 1-avg_2nd)*100, format="%.1f", key=f'p1r2') / 100
 
     if p2_data: st.sidebar.success(f"✅ Dati per {p2_name}")
     else: st.sidebar.warning(f"❌ Dati non trovati per {p2_name}")
 
     with st.sidebar.expander(f"Stats {p2_name}", expanded=True):
-        p2_1in = st.number_input(f"1st In %", 0.0, 100.0, val(p2_data,'1st_in',0.64)*100, format="%.1f", key=f'p2i_{p2_name}') / 100
-        p2_1w = st.number_input(f"1st Win %", 0.0, 100.0, val(p2_data,'1st_win',0.73)*100, format="%.1f", key=f'p2w_{p2_name}') / 100
-        p2_2w = st.number_input(f"2nd Win %", 0.0, 100.0, val(p2_data,'2nd_win',0.52)*100, format="%.1f", key=f'p2w2_{p2_name}') / 100
-        p2_ace = st.number_input(f"Ace %", 0.0, 50.0, val(p2_data,'ace_pct',0.07)*100, format="%.1f", key=f'p2a_{p2_name}') / 100
-        p2_df = st.number_input(f"DF %", 0.0, 50.0, val(p2_data,'df_pct',0.04)*100, format="%.1f", key=f'p2d_{p2_name}') / 100
+        p2_1in = st.number_input(f"1st In %", 0.0, 100.0, val(p2_data,'1st_in',0.64)*100, format="%.1f", key=f'p2i') / 100
+        p2_1w = st.number_input(f"1st Win %", 0.0, 100.0, val(p2_data,'1st_win',0.73)*100, format="%.1f", key=f'p2w') / 100
+        p2_2w = st.number_input(f"2nd Win %", 0.0, 100.0, val(p2_data,'2nd_win',0.52)*100, format="%.1f", key=f'p2w2') / 100
+        p2_ace = st.number_input(f"Ace %", 0.0, 50.0, val(p2_data,'ace_pct',0.07)*100, format="%.1f", key=f'p2a') / 100
+        p2_df = st.number_input(f"DF %", 0.0, 50.0, val(p2_data,'df_pct',0.04)*100, format="%.1f", key=f'p2d') / 100
         st.markdown("**Risposta**")
-        p2_r1 = st.number_input("Win vs 1st %", 0.0, 100.0, val(p2_data, 'ret_1st_win', 1-avg_1st)*100, format="%.1f", key=f'p2r1_{p2_name}') / 100
-        p2_r2 = st.number_input("Win vs 2nd %", 0.0, 100.0, val(p2_data, 'ret_2nd_win', 1-avg_2nd)*100, format="%.1f", key=f'p2r2_{p2_name}') / 100
+        p2_r1 = st.number_input("Win vs 1st %", 0.0, 100.0, val(p2_data, 'ret_1st_win', 1-avg_1st)*100, format="%.1f", key=f'p2r1') / 100
+        p2_r2 = st.number_input("Win vs 2nd %", 0.0, 100.0, val(p2_data, 'ret_2nd_win', 1-avg_2nd)*100, format="%.1f", key=f'p2r2') / 100
 
     st.sidebar.markdown("---")
     mot_map = {"Bassa":0.92, "Normale":1.0, "Alta":1.05, "Max":1.10}
     m1 = mot_map[st.sidebar.selectbox(f"Motivazione {p1_name}", list(mot_map.keys()), index=1)]
     m2 = mot_map[st.sidebar.selectbox(f"Motivazione {p2_name}", list(mot_map.keys()), index=1)]
+    
+    # Fattore ELO automatico nel Mental (piccolo bonus automatico)
+    elo_mental_bonus = (p1_elo - p2_elo) / 2000.0 # es. 200 pt diff = 0.1 bonus
+    
     men1 = st.sidebar.slider(f"Mental {p1_name}", 0.9, 1.1, 1.0)
     men2 = st.sidebar.slider(f"Mental {p2_name}", 0.9, 1.1, 1.0)
     
@@ -641,7 +651,6 @@ def main():
             conds = {'altitude':altitude, 'indoor':indoor, 'windy':windy}
             
             # --- APPLICAZIONE DATI TORNEO ---
-            # Passiamo i nuovi parametri speed_coeff e tour_ace_avg
             p1_1w_c, p1_a_c = TennisMath.adjust_stats_for_tournament(p1_1w, p1_ace, speed_coeff, tour_ace_avg, surface_ace_avg)
             p1_1w_c, p1_a_c = TennisMath.apply_tactical_adjustments(p1_1w_c, p1_a_c, p1_hand, p2_bh, conds)
             p1_2w_c, _ = TennisMath.adjust_stats_for_tournament(p1_2w, 0, speed_coeff, tour_ace_avg, surface_ace_avg)
@@ -657,8 +666,12 @@ def main():
             p2_1w_f = TennisMath.log5_matchup(p2_1w_c, p1_r1 * m1, avg_1st)
             p2_2w_f = TennisMath.log5_matchup(p2_2w_c, p1_r2 * m1, avg_2nd)
             
-            s1 = {'1st_in':p1_1in, '1st_win':p1_1w_f, '2nd_win':p1_2w_f, 'ace_pct':p1_a_c, 'df_pct':p1_df, 'mental':men1*m1, 'fatigue_factor':0.98}
-            s2 = {'1st_in':p2_1in, '1st_win':p2_1w_f, '2nd_win':p2_2w_f, 'ace_pct':p2_a_c, 'df_pct':p2_df, 'mental':men2*m2, 'fatigue_factor':0.98}
+            # Applicazione ELO Factor al mentale
+            m1_final = men1 * m1 * (1.0 + max(0, elo_mental_bonus))
+            m2_final = men2 * m2 * (1.0 + max(0, -elo_mental_bonus))
+
+            s1 = {'1st_in':p1_1in, '1st_win':p1_1w_f, '2nd_win':p1_2w_f, 'ace_pct':p1_a_c, 'df_pct':p1_df, 'mental':m1_final, 'fatigue_factor':0.98}
+            s2 = {'1st_in':p2_1in, '1st_win':p2_1w_f, '2nd_win':p2_2w_f, 'ace_pct':p2_a_c, 'df_pct':p2_df, 'mental':m2_final, 'fatigue_factor':0.98}
             
             markov_match_p, markov_set_p = TennisMarkov.get_full_theoretical_prob(s1, s2, sets_to_win*2-1)
             eng = TennisMonteCarloEngine(s1, s2, {'simulations':3000, 'sets_to_win':sets_to_win}, live_st)
@@ -729,6 +742,7 @@ def main():
                 if p1_hand=="Sinistra" and p2_bh=="Una Mano": st.success("Vantaggio Tattico: Mancino vs 1H-BH")
                 if circuit=="ATP (Uomini)" and sets_to_win==3: st.info("Slam Mode: Best of 5 sets")
                 st.success(f"Dati Campo: Speed {speed_coeff} | Ace Avg {tour_ace_avg:.1%}")
+                if elo_diff != 0: st.info(f"Fattore ELO attivo: {elo_diff} punti di differenza.")
 
 if __name__ == "__main__":
     main()
